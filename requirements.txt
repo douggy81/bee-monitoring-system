@@ -50,4 +50,4 @@ jsonschema==4.20.0
 colorlog==6.8.0
 
 # Security
-cryptography==41.0.8
+cryptography==46.0.1
