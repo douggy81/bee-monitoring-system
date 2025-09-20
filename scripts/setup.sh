@@ -74,14 +74,16 @@ install_dependencies() {
         htop \
         vim \
         screen \
-        supervisor
+        supervisor \
+        pciutils \
+        jq
     
     # OpenCV and camera dependencies
     apt install -y \
         libopencv-dev \
         python3-opencv \
         libcamera-dev \
-        libcamera-apps \
+        rpicam-apps \
         python3-picamera2
     
     # I2C and GPIO tools
@@ -91,6 +93,19 @@ install_dependencies() {
         python3-rpi.gpio
     
     log "System dependencies installed successfully"
+}
+
+# Check for Hailo runtime (AI HAT+) and advise installation if missing
+check_hailo_runtime() {
+    info "Checking Hailo runtime (hailortcli)..."
+    if command -v hailortcli >/dev/null 2>&1; then
+        hailortcli --version || true
+    else
+        warning "Hailo runtime not installed (hailortcli not found)."
+        echo "Refer to Hailo AI kit documentation to install HailoRT and firmware:"
+        echo "  https://hailo.ai/developer-zone/"
+        echo "After installing, verify with: hailortcli device-info"
+    fi
 }
 
 # Enable required interfaces
@@ -169,7 +184,9 @@ setup_python_env() {
     sudo -u "$SERVICE_USER" bash -c "
         source venv/bin/activate
         pip install --upgrade pip setuptools wheel
-        pip install -r src/requirements.txt
+        # Filter out packages that should be installed from apt or are heavy/problematic on Pi
+        sed -E '/^(opencv-python|picamera2|RPi\\.GPIO|tensorflow)==/d' src/requirements.txt > /tmp/requirements.filtered.txt
+        pip install -r /tmp/requirements.filtered.txt
     "
     
     log "Python environment setup completed"
@@ -353,6 +370,7 @@ main() {
     
     update_system
     install_dependencies
+    check_hailo_runtime
     enable_interfaces
     create_service_user
     create_install_dir

@@ -117,9 +117,9 @@ class HardwareSetup:
             result = subprocess.run(['vcgencmd', 'get_camera'], capture_output=True, text=True)
             logger.info(f"Camera status: {result.stdout.strip()}")
             
-            # Test camera with libcamera
-            logger.info("Testing camera with libcamera...")
-            result = subprocess.run(['libcamera-hello', '--list-cameras'], 
+            # Test camera with rpicam-apps (Bookworm+)
+            logger.info("Testing camera with rpicam-hello...")
+            result = subprocess.run(['rpicam-hello', '--list-cameras'],
                                   capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 logger.info("Camera detected successfully")
@@ -130,7 +130,7 @@ class HardwareSetup:
         except subprocess.TimeoutExpired:
             logger.warning("Camera test timed out")
         except FileNotFoundError:
-            logger.warning("libcamera tools not found - may need to install")
+            logger.warning("rpicam-apps not found - install with: sudo apt install -y rpicam-apps")
         except Exception as e:
             logger.warning(f"Camera setup issue: {e}")
     
@@ -139,12 +139,15 @@ class HardwareSetup:
         logger.info("Setting up AI HAT+ (Hailo-8L)...")
         
         try:
-            # Check if Hailo device is detected
-            result = subprocess.run(['lsusb'], capture_output=True, text=True)
-            if 'Hailo' in result.stdout:
-                logger.info("Hailo device detected")
-            else:
-                logger.warning("Hailo device not detected in USB devices")
+            # Check if Hailo device is detected on PCIe (Pi 5 HAT+ over M.2)
+            try:
+                result = subprocess.run(['lspci', '-nn'], capture_output=True, text=True)
+                if 'Hailo' in result.stdout or '1e60' in result.stdout:
+                    logger.info("Hailo device detected on PCIe")
+                else:
+                    logger.warning("Hailo device not detected on PCIe (lspci) — ensure PCIe is enabled and powered")
+            except FileNotFoundError:
+                logger.warning("lspci not found — install pciutils: sudo apt install -y pciutils")
             
             # Check for Hailo runtime
             try:
