@@ -23,7 +23,7 @@ Pillow==10.0.1
 # Raspberry Pi and Hardware
 # NOTE: On Raspberry Pi, install GPIO and Picamera2 via apt:
 #   sudo apt install -y python3-rpi.gpio python3-picamera2
-adafruit-circuitpython-dht==3.7.9
+adafruit-circuitpython-dht==4.0.9
 adafruit-circuitpython-bh1750==1.1.4
 w1thermsensor==2.0.0
 
