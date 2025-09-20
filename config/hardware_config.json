@@ -1,0 +1,70 @@
+{
+  "camera": {
+    "resolution": [1920, 1080],
+    "fps": 30,
+    "device_id": 0,
+    "auto_exposure": true,
+    "brightness": 50,
+    "contrast": 50,
+    "saturation": 50
+  },
+  "sensors": {
+    "dht22": {
+      "pin": 4,
+      "read_interval": 30,
+      "temperature_offset": 0.0,
+      "humidity_offset": 0.0
+    },
+    "light_sensor": {
+      "i2c_address": "0x29",
+      "integration_time": "100ms",
+      "gain": "1x"
+    },
+    "power_monitor": {
+      "battery_adc_channel": 1,
+      "solar_adc_channel": 2,
+      "voltage_divider_ratio": 3.3,
+      "battery_capacity": 20000
+    }
+  },
+  "ai_processing": {
+    "detection_model": "yolov8n_bee_detection.hef",
+    "behavior_model": "bee_behavior_classifier.hef",
+    "health_model": "bee_health_detector.hef",
+    "inference_threads": 4,
+    "batch_size": 1,
+    "confidence_threshold": 0.5,
+    "nms_threshold": 0.4
+  },
+  "data_storage": {
+    "local_storage_path": "/home/ubuntu/bee_data",
+    "max_video_duration": 300,
+    "video_compression": "h264",
+    "data_retention_days": 30,
+    "backup_to_cloud": true
+  },
+  "power_management": {
+    "low_battery_threshold": 20.0,
+    "critical_battery_threshold": 10.0,
+    "sleep_mode_enabled": true,
+    "night_mode_start": "20:00",
+    "night_mode_end": "06:00"
+  },
+  "alerts": {
+    "swarming_threshold": 50,
+    "agitation_duration_threshold": 300,
+    "health_score_threshold": 0.7,
+    "temperature_min": 10.0,
+    "temperature_max": 40.0,
+    "humidity_min": 30.0,
+    "humidity_max": 80.0
+  },
+  "connectivity": {
+    "wifi_ssid": "",
+    "wifi_password": "",
+    "cloud_endpoint": "https://api.digital4ai.com/bee-monitoring",
+    "api_key": "",
+    "upload_interval": 300,
+    "retry_attempts": 3
+  }
+}

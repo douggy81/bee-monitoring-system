@@ -1,0 +1,12 @@
+[Unit]
+Description=Digital4.ai Bee Monitoring OTA Updater
+Documentation=https://github.com/douggy81/bee-monitoring-system
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/bee-monitoring/scripts/ota-update.sh --check-only
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bee-ota-updater

@@ -1,0 +1,29 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 5000,
+    "debug": false
+  },
+  "database": {
+    "path": "/opt/bee-monitoring/data/bee_monitoring.db",
+    "backup_enabled": true,
+    "retention_days": 30
+  },
+  "alerts": {
+    "swarming_threshold": 0.7,
+    "health_threshold": 0.5,
+    "agitation_threshold": 0.8,
+    "email_notifications": false,
+    "webhook_url": ""
+  },
+  "data_collection": {
+    "interval_seconds": 30,
+    "batch_size": 10,
+    "max_storage_gb": 50
+  },
+  "security": {
+    "api_key_required": false,
+    "cors_enabled": true,
+    "rate_limiting": true
+  }
+}

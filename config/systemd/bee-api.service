@@ -1,0 +1,40 @@
+[Unit]
+Description=Digital4.ai Bee Monitoring API Server
+Documentation=https://github.com/douggy81/bee-monitoring-system
+After=network.target bee-monitoring.service
+Wants=network.target
+Requires=bee-monitoring.service
+
+[Service]
+Type=simple
+User=bee-monitor
+Group=bee-monitor
+WorkingDirectory=/opt/bee-monitoring/src
+Environment=PATH=/opt/bee-monitoring/venv/bin
+Environment=FLASK_APP=main.py
+Environment=FLASK_ENV=production
+ExecStart=/opt/bee-monitoring/venv/bin/python main.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bee-api
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bee-monitoring/data /opt/bee-monitoring/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=60%
+
+[Install]
+WantedBy=multi-user.target

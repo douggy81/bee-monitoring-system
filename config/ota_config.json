@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/douggy81/bee-monitoring-system.git",
+  "branch": "main",
+  "check_interval": 3600,
+  "auto_update": true,
+  "backup_retention": 5,
+  "webhook_url": "",
+  "update_window": {
+    "start_hour": 2,
+    "end_hour": 6
+  },
+  "rollback": {
+    "enabled": true,
+    "verification_timeout": 300
+  }
+}

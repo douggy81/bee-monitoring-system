@@ -1,0 +1,37 @@
+[Unit]
+Description=Digital4.ai Bee Monitoring System
+Documentation=https://github.com/douggy81/bee-monitoring-system
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=bee-monitor
+Group=bee-monitor
+WorkingDirectory=/opt/bee-monitoring
+Environment=PATH=/opt/bee-monitoring/venv/bin
+ExecStart=/opt/bee-monitoring/venv/bin/python /opt/bee-monitoring/src/hardware_integration.py
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bee-monitoring
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/bee-monitoring/data /opt/bee-monitoring/logs
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=1G
+CPUQuota=80%
+
+[Install]
+WantedBy=multi-user.target
