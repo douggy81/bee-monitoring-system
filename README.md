@@ -361,7 +361,7 @@ pytest tests/
 
 # Start development servers
 # Terminal 1: API server
-cd api && python src/main.py
+cd api && python main.py
 
 # Terminal 2: Frontend development server
 cd dashboard && npm run dev

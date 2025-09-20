@@ -11,9 +11,9 @@ User=bee-monitor
 Group=bee-monitor
 WorkingDirectory=/opt/bee-monitoring/src
 Environment=PATH=/opt/bee-monitoring/venv/bin
-Environment=FLASK_APP=main.py
+Environment=FLASK_APP=api/main.py
 Environment=FLASK_ENV=production
-ExecStart=/opt/bee-monitoring/venv/bin/python main.py
+ExecStart=/opt/bee-monitoring/venv/bin/python api/main.py
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5

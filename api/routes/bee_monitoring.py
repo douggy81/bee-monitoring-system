@@ -23,8 +23,13 @@ logger = logging.getLogger(__name__)
 # Create blueprint
 bee_bp = Blueprint('bee_monitoring', __name__)
 
-# Database path
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database', 'bee_monitoring.db')
+# Database path (shared with SQLAlchemy in api/main.py if BEE_DB_PATH is set)
+DB_PATH = os.environ.get(
+    'BEE_DB_PATH',
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), 'database', 'bee_monitoring.db')
+)
+# Ensure database directory exists
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 def get_db_connection():
     """Get database connection"""

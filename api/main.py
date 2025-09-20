@@ -5,9 +5,33 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from flask import Flask, send_from_directory
 from flask_cors import CORS
-from src.models.user import db
-from src.routes.user import user_bp
-from src.routes.bee_monitoring import bee_bp
+# Ensure unified database path is available to blueprints before import
+def _resolve_db_path() -> str:
+    # 1) Respect explicit env var if provided
+    env_path = os.environ.get('BEE_DB_PATH')
+    if env_path:
+        os.makedirs(os.path.dirname(env_path), exist_ok=True)
+        return env_path
+    
+    # 2) Preferred production/data path (aligns with systemd ReadWritePaths)
+    prod_dir = "/opt/bee-monitoring/data"
+    try:
+        if os.path.isdir("/opt/bee-monitoring") and os.access("/opt/bee-monitoring", os.W_OK):
+            os.makedirs(prod_dir, exist_ok=True)
+            return os.path.join(prod_dir, 'bee_monitoring.db')
+    except Exception:
+        pass
+    
+    # 3) Fallback to local repo path for development
+    local_dir = os.path.join(os.path.dirname(__file__), 'database')
+    os.makedirs(local_dir, exist_ok=True)
+    return os.path.join(local_dir, 'bee_monitoring.db')
+
+os.environ['BEE_DB_PATH'] = _resolve_db_path()
+
+from api.models.user import db
+from api.routes.user import user_bp
+from api.routes.bee_monitoring import bee_bp
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'static'))
 app.config['SECRET_KEY'] = 'digital4ai_bee_monitoring_secret_key_2025'
@@ -20,7 +44,7 @@ app.register_blueprint(user_bp, url_prefix='/api')
 app.register_blueprint(bee_bp, url_prefix='/api/bee')
 
 # Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.path.join(os.path.dirname(__file__), 'database', 'app.db')}"
+app.config['SQLALCHEMY_DATABASE_URI'] = f"sqlite:///{os.environ['BEE_DB_PATH']}"
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
