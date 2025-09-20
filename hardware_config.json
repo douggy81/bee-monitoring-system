@@ -1,0 +1,24 @@
+{
+  "camera": {
+    "resolution": [1920, 1080],
+    "fps": 30,
+    "rotation": 0,
+    "detection_enabled": true
+  },
+  "ai_processing": {
+    "model_path": "/opt/bee-monitoring/models/bee_detection_v1.tflite",
+    "confidence_threshold": 0.5,
+    "nms_threshold": 0.4,
+    "max_detections": 100
+  },
+  "sensors": {
+    "dht22_pin": 4,
+    "light_sensor_address": "0x23",
+    "temperature_probe_pin": 18
+  },
+  "data_collection": {
+    "interval_seconds": 30,
+    "batch_size": 10,
+    "storage_path": "/opt/bee-monitoring/data"
+  }
+}
