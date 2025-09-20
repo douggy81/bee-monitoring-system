@@ -91,8 +91,29 @@ install_dependencies() {
         i2c-tools \
         python3-smbus \
         python3-rpi.gpio
+
+    # NPU dependencies (Hailo runtime, driver, post-processing, rpicam stages)
+    # This meta-package installs Hailo driver/firmware, HailoRT middleware, Tappas core libs,
+    # and rpicam-apps Hailo post-processing stages.
+    apt install -y hailo-all || warning "hailo-all not available from current apt sources; install HailoRT per vendor docs"
     
     log "System dependencies installed successfully"
+}
+
+# Enable PCIe Gen 3.0 (recommended for best NPU performance)
+enable_pcie_gen3() {
+    local cfg="/boot/firmware/config.txt"
+    log "Ensuring PCIe Gen 3.0 is enabled (dtparam=pciex1_gen=3)"
+    if [ -f "$cfg" ]; then
+        if grep -q "^dtparam=pciex1_gen=3" "$cfg"; then
+            info "PCIe Gen 3.0 already enabled in $cfg"
+        else
+            echo "dtparam=pciex1_gen=3" >> "$cfg"
+            log "Appended dtparam=pciex1_gen=3 to $cfg (reboot required)"
+        fi
+    else
+        warning "$cfg not found; skipping PCIe Gen 3.0 enablement"
+    fi
 }
 
 # Check for Hailo runtime (AI HAT+) and advise installation if missing
@@ -369,6 +390,7 @@ main() {
     check_raspberry_pi
     
     update_system
+    enable_pcie_gen3
     install_dependencies
     check_hailo_runtime
     enable_interfaces

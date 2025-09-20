@@ -54,6 +54,12 @@ if command -v hailortcli >/dev/null 2>&1; then
     else
       warn "hailortcli device-info failed; ensure device is initialized and firmware is loaded."
     fi
+    echo "Identify via fw-control:"
+    if hailortcli fw-control identify >/tmp/hailo_ident.txt 2>&1; then
+      cat /tmp/hailo_ident.txt | sed 's/^/    /'
+    else
+      warn "hailortcli fw-control identify failed; verify driver/firmware versions and PCIe Gen 3 setting."
+    fi
   else
     warn "hailortcli present but version check failed."
   fi
