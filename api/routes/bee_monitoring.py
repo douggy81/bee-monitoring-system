@@ -8,13 +8,16 @@ Author: Digital4.ai Development Team
 Date: September 2025
 """
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, Response
 from datetime import datetime, timedelta
 import json
 import sqlite3
 import os
 from typing import Dict, List, Any
 import logging
+import base64
+import time
+import cv2
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -196,6 +199,93 @@ def get_current_status():
         
     except Exception as e:
         logger.error(f"Error getting current status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+# -----------------------------
+# Camera endpoints
+# -----------------------------
+
+@bee_bp.route('/camera/stream')
+def camera_stream():
+    """Live camera stream endpoint (MJPEG)."""
+    try:
+        # Lazy import to avoid hard dependency at import time
+        from hardware_integration import CameraManager
+
+        def generate_frames():
+            camera = CameraManager()
+            if not camera.initialize():
+                logger.error("Camera initialization failed for streaming")
+                return
+            try:
+                while True:
+                    frame = camera.capture_frame()
+                    if frame is not None:
+                        ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        if ok:
+                            frame_bytes = buffer.tobytes()
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                    time.sleep(0.2)  # ~5 FPS
+            finally:
+                camera.cleanup()
+
+        return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+    except Exception as e:
+        logger.error(f"Camera stream error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bee_bp.route('/camera/snapshot')
+def camera_snapshot():
+    """Return a single camera snapshot as base64 JSON."""
+    try:
+        from hardware_integration import CameraManager
+
+        camera = CameraManager()
+        if not camera.initialize():
+            return jsonify({'error': 'Camera initialization failed'}), 500
+
+        try:
+            frame = camera.capture_frame()
+            if frame is not None:
+                ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                if ok:
+                    img_base64 = base64.b64encode(buffer).decode('utf-8')
+                    return jsonify({
+                        'success': True,
+                        'image': f'data:image/jpeg;base64,{img_base64}',
+                        'timestamp': datetime.now().isoformat()
+                    })
+            return jsonify({'error': 'Failed to capture frame'}), 500
+        finally:
+            camera.cleanup()
+
+    except Exception as e:
+        logger.error(f"Camera snapshot error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@bee_bp.route('/camera/status')
+def camera_status():
+    """Check camera availability and report basic info."""
+    try:
+        from hardware_integration import CameraManager
+        camera = CameraManager()
+        available = camera.initialize()
+        backend = 'Picamera2' if getattr(camera, 'use_picamera2', False) else 'OpenCV' if available else 'Not Available'
+        if available:
+            camera.cleanup()
+        return jsonify({
+            'available': available,
+            'resolution': [camera.resolution[0], camera.resolution[1]],
+            'fps': camera.fps,
+            'backend': backend,
+            'timestamp': datetime.now().isoformat()
+        })
+    except Exception as e:
+        logger.error(f"Camera status error: {e}")
         return jsonify({'error': str(e)}), 500
 
 @bee_bp.route('/activity-data', methods=['GET'])
