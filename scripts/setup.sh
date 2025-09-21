@@ -272,6 +272,9 @@ setup_nginx() {
     
     # Copy nginx configuration
     cp "$INSTALL_DIR/src/config/nginx/bee-monitoring" /etc/nginx/sites-available/
+    # Ensure rate limit zones are defined at http-level
+    mkdir -p /etc/nginx/conf.d
+    cp "$INSTALL_DIR/src/config/nginx/req_zones.conf" /etc/nginx/conf.d/req_zones.conf
     
     # Enable site
     ln -sf /etc/nginx/sites-available/bee-monitoring /etc/nginx/sites-enabled/
