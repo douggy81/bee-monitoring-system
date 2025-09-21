@@ -214,20 +214,32 @@ def camera_stream():
         # Lazy import to avoid hard dependency at import time
         from hardware_integration import CameraManager
 
+        # Allow forcing rpicam-vid via query param: /camera/stream?source=rpicam
+        source = request.args.get('source', '').lower()
+        q_w = request.args.get('width', type=int) or 1280
+        q_h = request.args.get('height', type=int) or 720
+        q_fps = request.args.get('fps', type=int) or 30
+
         def _stream_from_rpicam(width: int, height: int, fps: int):
             """Fallback: stream MJPEG by spawning rpicam-vid and parsing JPEG frames."""
             cmd = [
-                "rpicam-vid",
+                "/usr/bin/rpicam-vid",
                 "--timeout", "0",
                 "--width", str(width),
                 "--height", str(height),
                 "--framerate", str(fps),
+                "--nopreview",
                 "--codec", "mjpeg",
                 "--inline",
                 "-o", "-",
             ]
             logger.warning(f"Falling back to rpicam-vid subprocess: {' '.join(cmd)}")
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0,
+            )
             buf = b""
             try:
                 while True:
@@ -261,6 +273,11 @@ def camera_stream():
         def generate_frames():
             # Lazy import Pillow to avoid hard dependency at app startup
             from PIL import Image
+            # Force rpicam-vid if requested
+            if source == 'rpicam':
+                yield from _stream_from_rpicam(q_w, q_h, q_fps)
+                return
+
             camera = CameraManager()
             if not camera.initialize():
                 # Fallback to rpicam-vid if camera init fails (e.g., OpenCV not available)
@@ -345,8 +362,9 @@ def camera_status():
     try:
         from hardware_integration import CameraManager
         camera = CameraManager()
-        available = camera.initialize()
-        backend = 'Picamera2' if getattr(camera, 'use_picamera2', False) else 'OpenCV' if available else 'Not Available'
+        # Do not allow OpenCV fallback here; we only want to know if Picamera2 works
+        available = camera.initialize(allow_opencv_fallback=False)
+        backend = 'Picamera2' if getattr(camera, 'use_picamera2', False) else 'Not Available'
         if available:
             camera.cleanup()
         return jsonify({

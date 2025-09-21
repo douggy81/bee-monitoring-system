@@ -64,8 +64,10 @@ class CameraManager:
         self.use_picamera2 = False
         self.picam2 = None
         
-    def initialize(self) -> bool:
-        """Initialize the camera"""
+    def initialize(self, allow_opencv_fallback: bool = True) -> bool:
+        """Initialize the camera
+        :param allow_opencv_fallback: when False, do NOT open OpenCV VideoCapture if Picamera2 fails.
+        """
         try:
             # Prefer Picamera2 on Raspberry Pi OS Bookworm (libcamera stack)
             try:
@@ -109,7 +111,10 @@ class CameraManager:
                     f"Picamera2 not available or failed to start ({pe}); falling back to OpenCV VideoCapture"
                 )
 
-            # Fallback to OpenCV VideoCapture
+            # Fallback to OpenCV VideoCapture (optional)
+            if not allow_opencv_fallback:
+                logger.info("Skipping OpenCV fallback per caller request")
+                return False
             if not _cv2_available:
                 logger.error("OpenCV (cv2) not available; cannot use VideoCapture fallback")
                 return False
