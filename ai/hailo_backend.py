@@ -26,7 +26,10 @@ class HailoBackend:
         # Ensure logs go to writable directory to avoid warnings
         env.setdefault("HAILORT_LOG_DIR", "/tmp")
         # Ensure HOME points to a writable path so Hailo can create ~/.hailo
-        env.setdefault("HOME", os.getenv("HAILO_HOME", "/opt/bee-monitoring/data"))
+        env["HOME"] = os.getenv("HAILO_HOME", "/opt/bee-monitoring/data")
+        # Ensure PATH contains system bins (hailortcli may invoke 'hostname')
+        sys_path = "/usr/bin:/bin"
+        env["PATH"] = f"{sys_path}:{env.get('PATH', '')}"
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True)
         out, err = proc.communicate(timeout=10)
         return proc.returncode, out, err
