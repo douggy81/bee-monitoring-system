@@ -16,16 +16,22 @@ def _resolve_db_path() -> str:
     # 2) Preferred production/data path (aligns with systemd ReadWritePaths)
     prod_dir = "/opt/bee-monitoring/data"
     try:
-        if os.path.isdir("/opt/bee-monitoring") and os.access("/opt/bee-monitoring", os.W_OK):
-            os.makedirs(prod_dir, exist_ok=True)
-            return os.path.join(prod_dir, 'bee_monitoring.db')
+        os.makedirs(prod_dir, exist_ok=True)
+        return os.path.join(prod_dir, 'bee_monitoring.db')
     except Exception:
+        # Under ProtectSystem, only specific paths are writable; continue to fallbacks
         pass
     
     # 3) Fallback to local repo path for development
-    local_dir = os.path.join(os.path.dirname(__file__), 'database')
-    os.makedirs(local_dir, exist_ok=True)
-    return os.path.join(local_dir, 'bee_monitoring.db')
+    try:
+        local_dir = os.path.join(os.path.dirname(__file__), 'database')
+        os.makedirs(local_dir, exist_ok=True)
+        return os.path.join(local_dir, 'bee_monitoring.db')
+    except Exception:
+        pass
+
+    # 4) Last-resort fallback
+    return "/tmp/bee_monitoring.db"
 
 os.environ['BEE_DB_PATH'] = _resolve_db_path()
 
@@ -83,4 +89,4 @@ def api_status():
     }
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
