@@ -132,6 +132,9 @@ yarn-error.log*
 dashboard/dist/
 dashboard/build/
 
+# Allow dashboard local libs to be tracked (UI utilities)
+!dashboard/src/lib/**
+
 # IDE files
 .vscode/
 .idea/

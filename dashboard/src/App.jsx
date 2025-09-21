@@ -57,6 +57,27 @@ function App() {
     lastUpdate: new Date().toLocaleTimeString()
   })
 
+  const [cameraStatus, setCameraStatus] = useState({ available: false, resolution: [1280, 720], fps: 30, backend: 'Unknown' })
+  useEffect(() => {
+    const fetchStatus = async () => {
+      try {
+        const res = await fetch('/api/bee/camera/status')
+        const data = await res.json()
+        setCameraStatus({
+          available: !!data.available,
+          resolution: data.resolution || [1280, 720],
+          fps: data.fps || 30,
+          backend: data.backend || 'Unknown'
+        })
+      } catch (e) {
+        // ignore, keep defaults
+      }
+    }
+    fetchStatus()
+    const id = setInterval(fetchStatus, 10000)
+    return () => clearInterval(id)
+  }, [])
+
   const [alerts, setAlerts] = useState([
     {
       id: 1,
@@ -507,27 +528,26 @@ function App() {
                   <span>Live Camera Feed</span>
                 </CardTitle>
                 <CardDescription>
-                  Real-time view from Camera Module 3 with AI detection overlay
+                  Real-time view from Camera Module 3
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="text-center text-white">
-                      <Camera className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                      <p className="text-lg font-medium">Camera Feed</p>
-                      <p className="text-sm opacity-75">Live video stream would appear here</p>
-                      <div className="mt-4 flex items-center justify-center space-x-4">
-                        <Badge variant="secondary">1920x1080</Badge>
-                        <Badge variant="secondary">30 FPS</Badge>
-                        <Badge variant="secondary">AI Detection: ON</Badge>
+                <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
+                  {cameraStatus.available ? (
+                    <img
+                      src="/api/bee/camera/stream"
+                      alt="Live camera stream"
+                      className="w-full h-full object-contain"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 flex items-center justify-center text-center text-white/80">
+                      <div>
+                        <Camera className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                        <p className="text-lg font-medium">Camera Unavailable</p>
+                        <p className="text-sm opacity-75">Ensure Picamera2 or OpenCV is installed on the device.</p>
                       </div>
                     </div>
-                  </div>
-                  {/* Simulated detection boxes */}
-                  <div className="absolute top-4 left-4 w-8 h-8 border-2 border-yellow-400 rounded"></div>
-                  <div className="absolute top-12 right-8 w-6 h-6 border-2 border-yellow-400 rounded"></div>
-                  <div className="absolute bottom-8 left-12 w-7 h-7 border-2 border-yellow-400 rounded"></div>
+                  )}
                 </div>
                 <div className="mt-4 flex items-center justify-between">
                   <div className="flex items-center space-x-4">
@@ -540,7 +560,13 @@ function App() {
                     </Button>
                   </div>
                   <div className="text-sm text-muted-foreground">
-                    Last frame: {currentData.lastUpdate}
+                    {cameraStatus.available ? (
+                      <>
+                        {cameraStatus.resolution[0]}x{cameraStatus.resolution[1]} · {cameraStatus.fps} FPS · Backend: {cameraStatus.backend}
+                      </>
+                    ) : (
+                      <>Camera offline</>
+                    )}
                   </div>
                 </div>
               </CardContent>

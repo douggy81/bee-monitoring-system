@@ -6,7 +6,7 @@ After=network.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=/opt/bee-monitoring/scripts/ota-update.sh --check-only
+ExecStart=/opt/bee-monitoring/src/scripts/ota-update.sh --check-only
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=bee-ota-updater
