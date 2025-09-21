@@ -12,7 +12,12 @@ Author: Digital4.ai Development Team
 Date: September 2025
 """
 
-import cv2
+try:
+    import cv2  # type: ignore
+    _cv2_available = True
+except Exception:
+    cv2 = None  # type: ignore
+    _cv2_available = False
 import numpy as np
 import os
 import time
@@ -80,6 +85,9 @@ class CameraManager:
                 logger.warning(f"Picamera2 not available or failed to start ({pe}); falling back to OpenCV VideoCapture")
 
             # Fallback to OpenCV VideoCapture
+            if not _cv2_available:
+                logger.error("OpenCV (cv2) not available; cannot use VideoCapture fallback")
+                return False
             self.cap = cv2.VideoCapture(0)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
@@ -104,9 +112,15 @@ class CameraManager:
                 if rgb is None:
                     logger.warning("Picamera2 returned no frame")
                     return None
-                frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                # Avoid cv2; swap channels to BGR using numpy
+                if rgb.ndim == 3 and rgb.shape[2] == 3:
+                    frame = rgb[:, :, ::-1]
+                else:
+                    frame = rgb
                 return frame
             else:
+                if not _cv2_available:
+                    return None
                 if not self.cap or not self.cap.isOpened():
                     return None
                 ret, frame = self.cap.read()
@@ -124,6 +138,9 @@ class CameraManager:
         if self.is_recording:
             return
             
+        if not _cv2_available:
+            logger.error("OpenCV (cv2) not available; recording is disabled")
+            return
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.video_writer = cv2.VideoWriter(output_path, fourcc, self.fps, self.resolution)
         self.is_recording = True
