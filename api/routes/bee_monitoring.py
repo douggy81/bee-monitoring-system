@@ -18,6 +18,8 @@ import logging
 import base64
 import time
 from io import BytesIO
+import subprocess
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -212,17 +214,64 @@ def camera_stream():
         # Lazy import to avoid hard dependency at import time
         from hardware_integration import CameraManager
 
+        def _stream_from_rpicam(width: int, height: int, fps: int):
+            """Fallback: stream MJPEG by spawning rpicam-vid and parsing JPEG frames."""
+            cmd = [
+                "rpicam-vid",
+                "--timeout", "0",
+                "--width", str(width),
+                "--height", str(height),
+                "--framerate", str(fps),
+                "--codec", "mjpeg",
+                "--inline",
+                "-o", "-",
+            ]
+            logger.warning(f"Falling back to rpicam-vid subprocess: {' '.join(cmd)}")
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            buf = b""
+            try:
+                while True:
+                    chunk = proc.stdout.read(4096)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    # Parse JPEG frames between SOI (FFD8) and EOI (FFD9)
+                    while True:
+                        soi = buf.find(b"\xff\xd8")
+                        if soi < 0:
+                            # No start marker yet; keep buffering
+                            # Prevent unbounded growth
+                            if len(buf) > 1_000_000:
+                                buf = buf[-200_000:]
+                            break
+                        eoi = buf.find(b"\xff\xd9", soi + 2)
+                        if eoi < 0:
+                            # Wait for the rest of the frame
+                            break
+                        frame_bytes = buf[soi:eoi+2]
+                        buf = buf[eoi+2:]
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            finally:
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+
         def generate_frames():
             # Lazy import Pillow to avoid hard dependency at app startup
             from PIL import Image
             camera = CameraManager()
             if not camera.initialize():
-                logger.error("Camera initialization failed for streaming")
+                # Fallback to rpicam-vid if camera init fails (e.g., OpenCV not available)
+                yield from _stream_from_rpicam(1280, 720, 30)
                 return
             try:
+                empty_count = 0
                 while True:
                     frame = camera.capture_frame()
                     if frame is not None:
+                        empty_count = 0
                         # Convert BGR->RGB if needed (CameraManager returns BGR for OpenCV compat)
                         if frame.shape[2] == 3:
                             rgb = frame[:, :, ::-1]
@@ -234,9 +283,18 @@ def camera_stream():
                         frame_bytes = bio.getvalue()
                         yield (b'--frame\r\n'
                                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-                    time.sleep(0.2)  # ~5 FPS
+                    else:
+                        empty_count += 1
+                        if empty_count >= 20:
+                            logger.warning("No frames captured from CameraManager; switching to rpicam-vid fallback")
+                            break
+                        time.sleep(0.2)  # ~5 FPS
             finally:
                 camera.cleanup()
+                if empty_count >= 20:
+                    # Start rpicam-vid fallback stream
+                    for part in _stream_from_rpicam(camera.resolution[0], camera.resolution[1], camera.fps):
+                        yield part
 
         return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
