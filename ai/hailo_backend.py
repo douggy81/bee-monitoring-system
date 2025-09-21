@@ -13,6 +13,7 @@ from typing import List, Tuple, Optional
 import os
 import subprocess
 import numpy as np
+import logging
 
 
 class HailoBackend:
@@ -24,6 +25,8 @@ class HailoBackend:
         env = dict(os.environ)
         # Ensure logs go to writable directory to avoid warnings
         env.setdefault("HAILORT_LOG_DIR", "/tmp")
+        # Ensure HOME points to a writable path so Hailo can create ~/.hailo
+        env.setdefault("HOME", os.getenv("HAILO_HOME", "/opt/bee-monitoring/data"))
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True)
         out, err = proc.communicate(timeout=10)
         return proc.returncode, out, err
@@ -32,15 +35,19 @@ class HailoBackend:
         # Verify hailortcli present (absolute path to avoid PATH issues under systemd)
         hailortcli_path = "/usr/bin/hailortcli"
         if not os.path.exists(hailortcli_path):
+            logging.warning("hailortcli not found at %s", hailortcli_path)
             return False
 
         # Identify device to confirm basic connectivity
         rc, out, err = self._run_cli([hailortcli_path, "fw-control", "identify"])
         if rc != 0:
+            logging.warning("hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
             # Try with sudo as fallback
             sudo_path = "/usr/bin/sudo"
             if os.path.exists(sudo_path):
                 rc, out, err = self._run_cli([sudo_path, "env", "HAILORT_LOG_DIR=/tmp", hailortcli_path, "fw-control", "identify"])
+                if rc != 0:
+                    logging.warning("sudo hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
             if rc != 0:
                 return False
 
