@@ -17,6 +17,7 @@ from typing import Dict, List, Any
 import logging
 import base64
 import time
+from io import BytesIO
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -212,7 +213,8 @@ def camera_stream():
         from hardware_integration import CameraManager
 
         def generate_frames():
-            import cv2  # lazy import to avoid requiring OpenCV at app startup
+            # Lazy import Pillow to avoid hard dependency at app startup
+            from PIL import Image
             camera = CameraManager()
             if not camera.initialize():
                 logger.error("Camera initialization failed for streaming")
@@ -221,11 +223,17 @@ def camera_stream():
                 while True:
                     frame = camera.capture_frame()
                     if frame is not None:
-                        ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                        if ok:
-                            frame_bytes = buffer.tobytes()
-                            yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        # Convert BGR->RGB if needed (CameraManager returns BGR for OpenCV compat)
+                        if frame.shape[2] == 3:
+                            rgb = frame[:, :, ::-1]
+                        else:
+                            rgb = frame
+                        # Encode JPEG via Pillow
+                        bio = BytesIO()
+                        Image.fromarray(rgb).save(bio, format='JPEG', quality=85)
+                        frame_bytes = bio.getvalue()
+                        yield (b'--frame\r\n'
+                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
                     time.sleep(0.2)  # ~5 FPS
             finally:
                 camera.cleanup()
@@ -243,7 +251,7 @@ def camera_snapshot():
     try:
         from hardware_integration import CameraManager
 
-        import cv2  # lazy import to avoid requiring OpenCV at app startup
+        from PIL import Image  # lazy import to avoid requiring OpenCV at app startup
         camera = CameraManager()
         if not camera.initialize():
             return jsonify({'error': 'Camera initialization failed'}), 500
@@ -251,14 +259,19 @@ def camera_snapshot():
         try:
             frame = camera.capture_frame()
             if frame is not None:
-                ok, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
-                if ok:
-                    img_base64 = base64.b64encode(buffer).decode('utf-8')
-                    return jsonify({
-                        'success': True,
-                        'image': f'data:image/jpeg;base64,{img_base64}',
-                        'timestamp': datetime.now().isoformat()
-                    })
+                # Convert BGR->RGB if needed
+                if frame.shape[2] == 3:
+                    rgb = frame[:, :, ::-1]
+                else:
+                    rgb = frame
+                bio = BytesIO()
+                Image.fromarray(rgb).save(bio, format='JPEG', quality=85)
+                img_base64 = base64.b64encode(bio.getvalue()).decode('utf-8')
+                return jsonify({
+                    'success': True,
+                    'image': f'data:image/jpeg;base64,{img_base64}',
+                    'timestamp': datetime.now().isoformat()
+                })
             return jsonify({'error': 'Failed to capture frame'}), 500
         finally:
             camera.cleanup()
