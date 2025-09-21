@@ -51,41 +51,72 @@ class BeeDetection:
 class CameraManager:
     """Manages the Pi Camera Module 3"""
     
-    def __init__(self, resolution=(1920, 1080), fps=30):
+    def __init__(self, resolution=(1280, 720), fps=30):
         self.resolution = resolution
         self.fps = fps
         self.cap = None
         self.is_recording = False
+        self.use_picamera2 = False
+        self.picam2 = None
         
     def initialize(self) -> bool:
         """Initialize the camera"""
         try:
+            # Prefer Picamera2 on Raspberry Pi OS Bookworm (libcamera stack)
+            try:
+                from picamera2 import Picamera2
+                self.picam2 = Picamera2()
+                config = self.picam2.create_preview_configuration(
+                    main={"size": (self.resolution[0], self.resolution[1]), "format": "RGB888"}
+                )
+                self.picam2.configure(config)
+                self.picam2.start()
+                self.use_picamera2 = True
+                logger.info(
+                    f"Camera initialized (Picamera2): {self.resolution[0]}x{self.resolution[1]} @ {self.fps}fps"
+                )
+                return True
+            except Exception as pe:
+                logger.warning(f"Picamera2 not available or failed to start ({pe}); falling back to OpenCV VideoCapture")
+
+            # Fallback to OpenCV VideoCapture
             self.cap = cv2.VideoCapture(0)
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.resolution[0])
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.resolution[1])
             self.cap.set(cv2.CAP_PROP_FPS, self.fps)
-            
             if not self.cap.isOpened():
-                logger.error("Failed to open camera")
+                logger.error("Failed to open camera via OpenCV VideoCapture")
                 return False
-                
-            logger.info(f"Camera initialized: {self.resolution[0]}x{self.resolution[1]} @ {self.fps}fps")
+            logger.info(
+                f"Camera initialized (OpenCV): {self.resolution[0]}x{self.resolution[1]} @ {self.fps}fps"
+            )
             return True
-            
         except Exception as e:
             logger.error(f"Camera initialization failed: {e}")
             return False
     
     def capture_frame(self) -> Optional[np.ndarray]:
         """Capture a single frame"""
-        if not self.cap or not self.cap.isOpened():
-            return None
-            
-        ret, frame = self.cap.read()
-        if ret:
-            return frame
-        else:
-            logger.warning("Failed to capture frame")
+        try:
+            if self.use_picamera2 and self.picam2 is not None:
+                # Picamera2 returns RGB; convert to BGR for OpenCV compatibility
+                rgb = self.picam2.capture_array()
+                if rgb is None:
+                    logger.warning("Picamera2 returned no frame")
+                    return None
+                frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                return frame
+            else:
+                if not self.cap or not self.cap.isOpened():
+                    return None
+                ret, frame = self.cap.read()
+                if ret:
+                    return frame
+                else:
+                    logger.warning("Failed to capture frame")
+                    return None
+        except Exception as e:
+            logger.warning(f"Capture error: {e}")
             return None
     
     def start_recording(self, output_path: str):
@@ -107,6 +138,12 @@ class CameraManager:
     
     def cleanup(self):
         """Clean up camera resources"""
+        try:
+            if self.use_picamera2 and self.picam2 is not None:
+                self.picam2.stop()
+                self.picam2 = None
+        except Exception:
+            pass
         if self.cap:
             self.cap.release()
         if self.is_recording:
