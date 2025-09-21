@@ -17,7 +17,6 @@ from typing import Dict, List, Any
 import logging
 import base64
 import time
-import cv2
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -213,6 +212,7 @@ def camera_stream():
         from hardware_integration import CameraManager
 
         def generate_frames():
+            import cv2  # lazy import to avoid requiring OpenCV at app startup
             camera = CameraManager()
             if not camera.initialize():
                 logger.error("Camera initialization failed for streaming")
@@ -243,6 +243,7 @@ def camera_snapshot():
     try:
         from hardware_integration import CameraManager
 
+        import cv2  # lazy import to avoid requiring OpenCV at app startup
         camera = CameraManager()
         if not camera.initialize():
             return jsonify({'error': 'Camera initialization failed'}), 500
