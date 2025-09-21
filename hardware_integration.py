@@ -14,6 +14,7 @@ Date: September 2025
 
 import cv2
 import numpy as np
+import os
 import time
 import json
 import threading
@@ -191,61 +192,60 @@ class AIProcessor:
         self.detection_model = None
         self.behavior_model = None
         self.health_model = None
+        self.backend = None
+        self.backend_name = os.getenv("AI_BACKEND", "CPU").upper()
         
     def initialize(self) -> bool:
-        """Initialize AI models"""
+        """Initialize AI backend and models"""
         try:
-            # Simulated Hailo model loading - replace with actual Hailo SDK
-            # from hailo_platform import HailoRT
-            # device = HailoRT.create_device()
-            # self.detection_model = device.create_infer_model("yolov8n_bee_detection.hef")
-            # self.behavior_model = device.create_infer_model("bee_behavior_classifier.hef")
-            # self.health_model = device.create_infer_model("bee_health_detector.hef")
-            
-            self.model_loaded = True
-            logger.info("AI models initialized successfully")
-            return True
-            
+            if self.backend_name == "HAILO":
+                try:
+                    from ai.hailo_backend import HailoBackend
+                    hef_path = os.getenv("HAILO_HEF", "")
+                    self.backend = HailoBackend(hef_path=hef_path or None)
+                    if self.backend.initialize():
+                        self.model_loaded = True
+                        logger.info("Hailo backend initialized%s",
+                                    f" with HEF '{hef_path}'" if hef_path else " (no HEF provided; using placeholder inference)")
+                        return True
+                    else:
+                        logger.warning("Falling back to CPU backend after Hailo backend failed to initialize")
+                except Exception as he:
+                    logger.warning(f"Hailo backend import/init failed: {he}. Falling back to CPU backend")
+
+            # Default CPU fallback (simulation)
+            from ai.cpu_backend import CpuBackend
+            self.backend = CpuBackend()
+            if self.backend.initialize():
+                self.model_loaded = True
+                logger.info("CPU backend initialized (simulated inference)")
+                return True
+
+            logger.error("No AI backend initialized")
+            return False
+
         except Exception as e:
-            logger.error(f"AI model initialization failed: {e}")
+            logger.error(f"AI backend initialization failed: {e}")
             return False
     
     def detect_bees(self, frame: np.ndarray) -> BeeDetection:
-        """Detect bees in the frame using YOLOv8n"""
-        if not self.model_loaded:
+        """Detect bees in the frame using the selected backend"""
+        if not self.model_loaded or self.backend is None:
             return self._create_empty_detection()
-        
+
         try:
-            # Simulated bee detection - replace with actual Hailo inference
-            # results = self.detection_model.infer(frame)
-            # bounding_boxes = results.get_bounding_boxes()
-            # confidence_scores = results.get_confidence_scores()
-            
-            # For now, return simulated detection results
-            bee_count = np.random.randint(5, 25)
-            bounding_boxes = []
-            confidence_scores = []
-            
-            for _ in range(bee_count):
-                x = np.random.randint(0, frame.shape[1] - 50)
-                y = np.random.randint(0, frame.shape[0] - 50)
-                w = np.random.randint(20, 50)
-                h = np.random.randint(20, 50)
-                bounding_boxes.append((x, y, w, h))
-                confidence_scores.append(np.random.uniform(0.7, 0.95))
-            
-            behavior = self._classify_behavior(frame, bounding_boxes)
-            health_indicators = self._analyze_health(frame, bounding_boxes)
-            
+            boxes, scores = self.backend.infer(frame)
+            bee_count = len(boxes)
+            behavior = self._classify_behavior(frame, boxes)
+            health_indicators = self._analyze_health(frame, boxes)
             return BeeDetection(
                 timestamp=datetime.now(),
                 bee_count=bee_count,
-                bounding_boxes=bounding_boxes,
-                confidence_scores=confidence_scores,
+                bounding_boxes=boxes,
+                confidence_scores=scores,
                 behavior_classification=behavior,
-                health_indicators=health_indicators
+                health_indicators=health_indicators,
             )
-            
         except Exception as e:
             logger.error(f"Bee detection failed: {e}")
             return self._create_empty_detection()
