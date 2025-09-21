@@ -69,7 +69,24 @@ class CameraManager:
         try:
             # Prefer Picamera2 on Raspberry Pi OS Bookworm (libcamera stack)
             try:
-                from picamera2 import Picamera2
+                try:
+                    from picamera2 import Picamera2  # type: ignore
+                except Exception as pe:
+                    # Attempt localized sys.path injection for system site-packages
+                    import sys as _sys
+                    _added = False
+                    _alt = "/usr/lib/python3/dist-packages"
+                    if _alt not in _sys.path:
+                        _sys.path.append(_alt)
+                        _added = True
+                    try:
+                        from picamera2 import Picamera2  # type: ignore
+                    except Exception as pe2:
+                        raise pe2
+                    finally:
+                        # Leave the path; harmless and may be useful later in this process
+                        pass
+
                 self.picam2 = Picamera2()
                 config = self.picam2.create_preview_configuration(
                     main={"size": (self.resolution[0], self.resolution[1]), "format": "RGB888"}
