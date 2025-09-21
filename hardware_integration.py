@@ -99,7 +99,15 @@ class CameraManager:
                 )
                 return True
             except Exception as pe:
-                logger.warning(f"Picamera2 not available or failed to start ({pe}); falling back to OpenCV VideoCapture")
+                # Log detailed information about Picamera2 initialization failure
+                logger.error(
+                    f"Picamera2 initialization failed: {type(pe).__name__}: {pe}"
+                )
+                # Include full traceback for diagnostics
+                logger.exception("Picamera2 init traceback")
+                logger.warning(
+                    f"Picamera2 not available or failed to start ({pe}); falling back to OpenCV VideoCapture"
+                )
 
             # Fallback to OpenCV VideoCapture
             if not _cv2_available:
