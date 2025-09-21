@@ -29,21 +29,18 @@ class HailoBackend:
         return proc.returncode, out, err
 
     def initialize(self) -> bool:
-        # Verify hailortcli present
-        ret, out, err = self._run_cli(["bash", "-lc", "command -v hailortcli >/dev/null 2>&1; echo $?" ])
-        if ret != 0:
-            # subshell prints exit status; parse stdout
-            try:
-                if out.strip() != "0":
-                    return False
-            except Exception:
-                return False
+        # Verify hailortcli present (absolute path to avoid PATH issues under systemd)
+        hailortcli_path = "/usr/bin/hailortcli"
+        if not os.path.exists(hailortcli_path):
+            return False
 
         # Identify device to confirm basic connectivity
-        rc, out, err = self._run_cli(["hailortcli", "fw-control", "identify"])
+        rc, out, err = self._run_cli([hailortcli_path, "fw-control", "identify"])
         if rc != 0:
             # Try with sudo as fallback
-            rc, out, err = self._run_cli(["sudo", "HAILORT_LOG_DIR=/tmp", "hailortcli", "fw-control", "identify"])
+            sudo_path = "/usr/bin/sudo"
+            if os.path.exists(sudo_path):
+                rc, out, err = self._run_cli([sudo_path, "env", "HAILORT_LOG_DIR=/tmp", hailortcli_path, "fw-control", "identify"])
             if rc != 0:
                 return False
 
