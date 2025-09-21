@@ -211,9 +211,6 @@ def get_current_status():
 def camera_stream():
     """Live camera stream endpoint (MJPEG)."""
     try:
-        # Lazy import to avoid hard dependency at import time
-        from hardware_integration import CameraManager
-
         # Allow forcing rpicam-vid via query param: /camera/stream?source=rpicam
         source = request.args.get('source', '').lower()
         q_w = request.args.get('width', type=int) or 1280
@@ -270,18 +267,31 @@ def camera_stream():
                 except Exception:
                     pass
 
+        # If client explicitly requests rpicam, bypass hardware_integration entirely
+        if source == 'rpicam':
+            return Response(_stream_from_rpicam(q_w, q_h, q_fps), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+        # Lazy import only if not forcing rpicam
+        from hardware_integration import CameraManager
+
         def generate_frames():
-            # Lazy import Pillow to avoid hard dependency at app startup
-            from PIL import Image
-            # Force rpicam-vid if requested
-            if source == 'rpicam':
+            # Try to import Pillow lazily; if it fails, fallback to rpicam-vid
+            try:
+                from PIL import Image
+                pil_ok = True
+            except Exception as pil_err:
+                logger.warning(f"Pillow not available for JPEG encoding ({pil_err}); using rpicam-vid fallback")
+                pil_ok = False
+
+            # If we can't encode with Pillow, stream via rpicam-vid directly
+            if not pil_ok:
                 yield from _stream_from_rpicam(q_w, q_h, q_fps)
                 return
 
-            camera = CameraManager()
-            if not camera.initialize():
-                # Fallback to rpicam-vid if camera init fails (e.g., OpenCV not available)
-                yield from _stream_from_rpicam(1280, 720, 30)
+            camera = CameraManager(resolution=(q_w, q_h), fps=q_fps)
+            # Try Picamera2 only; if not available, go to rpicam-vid fallback
+            if not camera.initialize(allow_opencv_fallback=False):
+                yield from _stream_from_rpicam(q_w, q_h, q_fps)
                 return
             try:
                 empty_count = 0
@@ -294,12 +304,16 @@ def camera_stream():
                             rgb = frame[:, :, ::-1]
                         else:
                             rgb = frame
-                        # Encode JPEG via Pillow
-                        bio = BytesIO()
-                        Image.fromarray(rgb).save(bio, format='JPEG', quality=85)
-                        frame_bytes = bio.getvalue()
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        try:
+                            # Encode JPEG via Pillow
+                            bio = BytesIO()
+                            Image.fromarray(rgb).save(bio, format='JPEG', quality=85)
+                            frame_bytes = bio.getvalue()
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        except Exception as enc_err:
+                            logger.error(f"Pillow JPEG encode failed: {enc_err}; switching to rpicam-vid fallback")
+                            break
                     else:
                         empty_count += 1
                         if empty_count >= 20:
@@ -358,19 +372,31 @@ def camera_snapshot():
 
 @bee_bp.route('/camera/status')
 def camera_status():
-    """Check camera availability and report basic info."""
+    """Non-invasive camera availability check using Picamera2 enumeration.
+    This avoids opening the device so it won't report false negatives while a stream is active.
+    """
     try:
-        from hardware_integration import CameraManager
-        camera = CameraManager()
-        # Do not allow OpenCV fallback here; we only want to know if Picamera2 works
-        available = camera.initialize(allow_opencv_fallback=False)
-        backend = 'Picamera2' if getattr(camera, 'use_picamera2', False) else 'Not Available'
-        if available:
-            camera.cleanup()
+        try:
+            # Attempt to import Picamera2 from system packages if not in venv
+            try:
+                from picamera2 import Picamera2  # type: ignore
+            except Exception:
+                import sys as _sys
+                _alt = "/usr/lib/python3/dist-packages"
+                if _alt not in _sys.path:
+                    _sys.path.append(_alt)
+                from picamera2 import Picamera2  # type: ignore
+            info = Picamera2.global_camera_info()
+            available = bool(info and len(info) > 0)
+            backend = 'Picamera2' if available else 'Not Available'
+        except Exception as e2:
+            logger.warning(f"Picamera2 enumeration failed: {e2}")
+            available = False
+            backend = 'Not Available'
         return jsonify({
             'available': available,
-            'resolution': [camera.resolution[0], camera.resolution[1]],
-            'fps': camera.fps,
+            'resolution': [1280, 720],
+            'fps': 30,
             'backend': backend,
             'timestamp': datetime.now().isoformat()
         })
