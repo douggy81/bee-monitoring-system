@@ -19,6 +19,8 @@ Werkzeug==3.1.3
 #       TensorFlow is not used in this codebase and is omitted to reduce footprint.
 numpy==1.24.3
 Pillow==10.0.1
+ultralytics==8.2.103
+onnxruntime==1.17.1
 
 # Raspberry Pi and Hardware
 # NOTE: On Raspberry Pi, install GPIO and Picamera2 via apt:

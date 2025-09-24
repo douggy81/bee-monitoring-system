@@ -161,6 +161,11 @@ backups/
 models/*.tflite
 models/*.pb
 models/*.h5
+models/*.onnx
+models/*.pt
+api/models/*.onnx
+*.onnx
+*.pt
 config/local_*.json
 .last_backup
 
@@ -168,6 +173,10 @@ config/local_*.json
 *.tmp
 *.temp
 *.bak
+
+# Local export virtualenvs (do not commit)
+.onnx-export-venv/
+.yolo_export_env/
 
 # SSL certificates
 *.pem

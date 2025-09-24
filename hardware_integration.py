@@ -110,6 +110,22 @@ class CameraManager:
                 logger.warning(
                     f"Picamera2 not available or failed to start ({pe}); falling back to OpenCV VideoCapture"
                 )
+                # Ensure any partially opened Picamera2 resources are released
+                try:
+                    if self.picam2 is not None:
+                        try:
+                            self.picam2.stop()
+                        except Exception:
+                            pass
+                        try:
+                            close_fn = getattr(self.picam2, "close", None)
+                            if callable(close_fn):
+                                close_fn()
+                        except Exception:
+                            pass
+                        self.picam2 = None
+                except Exception:
+                    pass
 
             # Fallback to OpenCV VideoCapture (optional)
             if not allow_opencv_fallback:
@@ -186,8 +202,17 @@ class CameraManager:
     def cleanup(self):
         """Clean up camera resources"""
         try:
-            if self.use_picamera2 and self.picam2 is not None:
-                self.picam2.stop()
+            if self.picam2 is not None:
+                try:
+                    self.picam2.stop()
+                except Exception:
+                    pass
+                try:
+                    close_fn = getattr(self.picam2, "close", None)
+                    if callable(close_fn):
+                        close_fn()
+                except Exception:
+                    pass
                 self.picam2 = None
         except Exception:
             pass

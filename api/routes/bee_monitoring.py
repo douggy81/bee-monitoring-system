@@ -19,6 +19,8 @@ import base64
 import time
 from io import BytesIO
 import subprocess
+import threading
+import numpy as np
 
 
 # Configure logging
@@ -143,6 +145,35 @@ def init_bee_database():
 # Initialize database on import
 init_bee_database()
 
+# -----------------------------
+# Lazy-loaded AI backends
+# -----------------------------
+_cpu_backend = None  # type: ignore
+
+def _get_cpu_backend():
+    """Load and cache the YOLOv8 CPU backend (Ultralytics) lazily.
+    Returns None if the backend fails to initialize.
+    """
+    global _cpu_backend
+    if _cpu_backend is not None:
+        return _cpu_backend
+    try:
+        from ai.cpu_backend import CpuBackend
+        # Prefer ONNX; fall back to PT; if neither exists, let backend resolve
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+        onnx_p = os.path.join(models_dir, 'yolov8n.onnx')
+        pt_p = os.path.join(models_dir, 'yolov8n.pt')
+        model_path = onnx_p if os.path.isfile(onnx_p) else (pt_p if os.path.isfile(pt_p) else None)
+        backend = CpuBackend(model_path=model_path, imgsz=640, conf_threshold=0.25, iou_threshold=0.45)
+        if backend.initialize():
+            _cpu_backend = backend
+            return _cpu_backend
+        logger.warning("CpuBackend failed to initialize; YOLOv8 weights or ultralytics may be missing")
+        return None
+    except Exception as e:
+        logger.warning(f"CpuBackend import/init failed: {e}")
+        return None
+
 @bee_bp.route('/health', methods=['GET'])
 def health_check():
     """API health check endpoint"""
@@ -216,6 +247,11 @@ def camera_stream():
         q_w = request.args.get('width', type=int) or 1280
         q_h = request.args.get('height', type=int) or 720
         q_fps = request.args.get('fps', type=int) or 30
+        # AI overlay controls
+        ai_enabled = request.args.get('ai', '0').lower() in ('1', 'true', 'yes')
+        ai_stride = request.args.get('ai_stride', type=int) or 3
+        ai_async = request.args.get('ai_async', '1').lower() in ('1', 'true', 'yes')
+        ai_interval_ms = request.args.get('ai_interval_ms', type=int) or 500
 
         def _stream_from_rpicam(width: int, height: int, fps: int):
             """Fallback: stream MJPEG by spawning rpicam-vid and parsing JPEG frames."""
@@ -259,8 +295,13 @@ def camera_stream():
                             break
                         frame_bytes = buf[soi:eoi+2]
                         buf = buf[eoi+2:]
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                        headers = (
+                            b'--frame\r\n'
+                            b'Content-Type: image/jpeg\r\n'
+                            + f'Content-Length: {len(frame_bytes)}\r\n'.encode('ascii')
+                            + b'\r\n'
+                        )
+                        yield headers + frame_bytes + b'\r\n'
             finally:
                 try:
                     proc.terminate()
@@ -269,7 +310,16 @@ def camera_stream():
 
         # If client explicitly requests rpicam, bypass hardware_integration entirely
         if source == 'rpicam':
-            return Response(_stream_from_rpicam(q_w, q_h, q_fps), mimetype='multipart/x-mixed-replace; boundary=frame')
+            return Response(
+                _stream_from_rpicam(q_w, q_h, q_fps),
+                mimetype='multipart/x-mixed-replace; boundary=frame',
+                headers={
+                    'Cache-Control': 'no-cache, no-store, must-revalidate',
+                    'Pragma': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'X-Accel-Buffering': 'no',  # hint nginx to disable buffering
+                },
+            )
 
         # Lazy import only if not forcing rpicam
         from hardware_integration import CameraManager
@@ -277,7 +327,7 @@ def camera_stream():
         def generate_frames():
             # Try to import Pillow lazily; if it fails, fallback to rpicam-vid
             try:
-                from PIL import Image
+                from PIL import Image, ImageDraw
                 pil_ok = True
             except Exception as pil_err:
                 logger.warning(f"Pillow not available for JPEG encoding ({pil_err}); using rpicam-vid fallback")
@@ -295,6 +345,31 @@ def camera_stream():
                 return
             try:
                 empty_count = 0
+                # AI backend (optional)
+                ai_on = ai_enabled
+                backend = None
+                last_dets = []
+                last_infer_ts = 0.0
+                infer_thread = None
+                infer_lock = threading.Lock()
+                frame_index = 0
+                if ai_on:
+                    backend = _get_cpu_backend()
+                    if backend is None:
+                        logger.warning("AI overlay requested but backend unavailable; continuing without overlay")
+                        ai_on = False
+                # Define async inference runner if enabled
+                if ai_on and backend is not None and ai_async:
+                    def _run_infer(img_bgr):
+                        nonlocal last_dets, last_infer_ts
+                        try:
+                            res = backend.infer_full(img_bgr)
+                        except Exception as infer_err:
+                            logger.warning(f"AI overlay inference failed: {infer_err}")
+                            res = []
+                        with infer_lock:
+                            last_dets = res
+                            last_infer_ts = time.time()
                 while True:
                     frame = camera.capture_frame()
                     if frame is not None:
@@ -304,13 +379,63 @@ def camera_stream():
                             rgb = frame[:, :, ::-1]
                         else:
                             rgb = frame
+                        # Optional AI inference & overlay (non-blocking preferred)
+                        frame_index += 1
+                        dets_to_draw = []
+                        if ai_on and backend is not None:
+                            if ai_async:
+                                can_launch = (infer_thread is None) or (not infer_thread.is_alive())
+                                elapsed_ms = (time.time() - last_infer_ts) * 1000.0
+                                if can_launch and elapsed_ms >= float(ai_interval_ms):
+                                    try:
+                                        # copy current frame for background inference
+                                        img_copy = frame.copy()
+                                        infer_thread = threading.Thread(target=_run_infer, args=(img_copy,), daemon=True)
+                                        infer_thread.start()
+                                    except Exception as th_err:
+                                        logger.warning(f"Failed to start async inference: {th_err}")
+                                # use last available detections without blocking
+                                with infer_lock:
+                                    if last_dets:
+                                        dets_to_draw = list(last_dets)
+                            else:
+                                # synchronous fallback controlled by ai_stride
+                                if (frame_index % max(1, ai_stride) == 0):
+                                    try:
+                                        last_dets = backend.infer_full(frame)
+                                    except Exception as infer_err:
+                                        logger.warning(f"AI overlay inference failed: {infer_err}")
+                                        last_dets = []
+                                if last_dets:
+                                    dets_to_draw = last_dets
                         try:
                             # Encode JPEG via Pillow
                             bio = BytesIO()
-                            Image.fromarray(rgb).save(bio, format='JPEG', quality=85)
+                            if ai_on and dets_to_draw:
+                                img = Image.fromarray(rgb)
+                                draw = ImageDraw.Draw(img)
+                                for det in dets_to_draw:
+                                    bbox = det.get('bbox', [0, 0, 0, 0])
+                                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                                        continue
+                                    x, y, w_box, h_box = bbox
+                                    # Rectangle
+                                    draw.rectangle([(int(x), int(y)), (int(x + w_box), int(y + h_box))], outline=(0, 255, 0), width=2)
+                                    # Label
+                                    label = f"{det.get('class_name','obj')} {det.get('confidence',0):.2f}"
+                                    tx, ty = int(x), max(0, int(y) - 12)
+                                    draw.text((tx + 2, ty), label, fill=(255, 255, 255))
+                                img.save(bio, format='JPEG', quality=85)
+                            else:
+                                Image.fromarray(rgb).save(bio, format='JPEG', quality=85)
                             frame_bytes = bio.getvalue()
-                            yield (b'--frame\r\n'
-                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                            headers = (
+                                b'--frame\r\n'
+                                b'Content-Type: image/jpeg\r\n'
+                                + f'Content-Length: {len(frame_bytes)}\r\n'.encode('ascii')
+                                + b'\r\n'
+                            )
+                            yield headers + frame_bytes + b'\r\n'
                         except Exception as enc_err:
                             logger.error(f"Pillow JPEG encode failed: {enc_err}; switching to rpicam-vid fallback")
                             break
@@ -327,12 +452,100 @@ def camera_stream():
                     for part in _stream_from_rpicam(camera.resolution[0], camera.resolution[1], camera.fps):
                         yield part
 
-        return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+        return Response(
+            generate_frames(),
+            mimetype='multipart/x-mixed-replace; boundary=frame',
+            headers={
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Connection': 'keep-alive',
+                'X-Accel-Buffering': 'no',
+            },
+        )
 
     except Exception as e:
         logger.error(f"Camera stream error: {e}")
         return jsonify({'error': str(e)}), 500
 
+
+@bee_bp.route('/ai/detect', methods=['GET'])
+def ai_detect():
+    """Run YOLOv8 CPU inference on a single camera frame.
+    Query params:
+      - annotate: 0/1 to include an annotated image (base64) in the response
+      - conf: confidence threshold (e.g., 0.25)
+      - iou: IOU threshold for NMS (e.g., 0.45)
+    Response JSON:
+      {
+        "success": true,
+        "backend": "yolov8_cpu",
+        "detections": [ {bbox:[x,y,w,h], confidence, class_id, class_name}, ... ],
+        "image": "data:image/jpeg;base64,..."  (if annotate=1)
+      }
+    """
+    try:
+        # Load backend (and optionally tweak thresholds)
+        backend = _get_cpu_backend()
+        if backend is None:
+            return jsonify({
+                'success': False,
+                'error': 'YOLOv8 CPU backend not available. Install ultralytics and ensure yolov8n.pt exists.'
+            }), 503
+
+        conf = request.args.get('conf', type=float)
+        iou = request.args.get('iou', type=float)
+        if conf is not None:
+            backend.conf = float(conf)
+        if iou is not None:
+            backend.iou = float(iou)
+
+        # Capture one frame from the camera
+        from hardware_integration import CameraManager
+        cam = CameraManager()
+        if not cam.initialize():
+            return jsonify({'success': False, 'error': 'Camera initialization failed'}), 500
+        try:
+            frame = cam.capture_frame()
+            if frame is None:
+                return jsonify({'success': False, 'error': 'Failed to capture frame'}), 500
+        finally:
+            cam.cleanup()
+
+        # Run inference
+        detections = backend.infer_full(frame)
+
+        out = {
+            'success': True,
+            'backend': 'yolov8_cpu',
+            'detections': detections,
+            'timestamp': datetime.now().isoformat(),
+        }
+
+        # Optional annotation
+        annotate = request.args.get('annotate', default='0')
+        if annotate in ('1', 'true', 'True'):
+            try:
+                import cv2  # type: ignore
+                draw = frame.copy()
+                for det in detections:
+                    x, y, w, h = det.get('bbox', [0, 0, 0, 0])
+                    x2, y2 = x + w, y + h
+                    cv2.rectangle(draw, (int(x), int(y)), (int(x2), int(y2)), (0, 255, 0), 2)
+                    label = f"{det.get('class_name','obj')} {det.get('confidence',0):.2f}"
+                    cv2.putText(draw, label, (int(x), max(0, int(y) - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                # Encode JPEG
+                ok, buf = cv2.imencode('.jpg', draw)
+                if ok:
+                    img_b64 = base64.b64encode(buf.tobytes()).decode('utf-8')
+                    out['image'] = f'data:image/jpeg;base64,{img_b64}'
+            except Exception as e:
+                logger.warning(f"Annotation failed: {e}")
+
+        return jsonify(out)
+
+    except Exception as e:
+        logger.error(f"AI detect error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 @bee_bp.route('/camera/snapshot')
 def camera_snapshot():

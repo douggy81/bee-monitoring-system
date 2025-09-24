@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card.jsx'
 import { Button } from '@/components/ui/button.jsx'
 import { Badge } from '@/components/ui/badge.jsx'
@@ -77,6 +77,34 @@ function App() {
     const id = setInterval(fetchStatus, 10000)
     return () => clearInterval(id)
   }, [])
+
+  // Allow forcing rpicam-vid fallback and automatically fall back on IMG error
+  const [useRpicam, setUseRpicam] = useState(false)
+  const [aiOverlay, setAiOverlay] = useState(false)
+  const [streamError, setStreamError] = useState(false)
+  const videoContainerRef = useRef(null)
+  const handleFullscreen = () => {
+    const el = videoContainerRef.current
+    if (!el) return
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.()
+    } else {
+      el.requestFullscreen?.()
+    }
+  }
+  const streamUrl = useMemo(() => {
+    const params = []
+    if (useRpicam) params.push('source=rpicam')
+    if (aiOverlay) {
+      // Enable AI overlay with non-blocking inference for smoother stream
+      params.push('ai=1')
+      params.push('ai_stride=5')
+      params.push('ai_async=1')
+      params.push('ai_interval_ms=400')
+    }
+    const qs = params.length ? `?${params.join('&')}` : ''
+    return `/api/bee/camera/stream${qs}`
+  }, [useRpicam, aiOverlay])
 
   const [alerts, setAlerts] = useState([
     {
@@ -532,15 +560,18 @@ function App() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="relative bg-black rounded-lg overflow-hidden aspect-video">
-                  {cameraStatus.available ? (
-                    <img
-                      src="/api/bee/camera/stream"
-                      alt="Live camera stream"
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-center text-white/80">
+                <div ref={videoContainerRef} className="relative bg-black rounded-lg overflow-hidden aspect-video">
+                  <img
+                    src={streamUrl}
+                    key={streamUrl}
+                    alt="Live camera stream"
+                    className="w-full h-full object-contain"
+                    loading="eager"
+                    onLoad={() => setStreamError(false)}
+                    onError={() => { setStreamError(true); setUseRpicam(true) }}
+                  />
+                  {streamError && !useRpicam && (
+                    <div className="absolute inset-0 flex items-center justify-center text-center text-white/80 bg-black/40">
                       <div>
                         <Camera className="w-16 h-16 mx-auto mb-4 opacity-50" />
                         <p className="text-lg font-medium">Camera Unavailable</p>
@@ -551,9 +582,15 @@ function App() {
                 </div>
                 <div className="mt-4 flex items-center justify-between">
                   <div className="flex items-center space-x-4">
-                    <Button variant="outline" size="sm">
+                    <Button variant="outline" size="sm" onClick={handleFullscreen}>
                       <Eye className="w-4 h-4 mr-2" />
                       View Full Screen
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setUseRpicam(v => !v)}>
+                      {useRpicam ? 'Use Picamera2' : 'Force rpicam-vid'}
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setAiOverlay(v => !v)}>
+                      {aiOverlay ? 'Hide AI Detections' : 'Show AI Detections'}
                     </Button>
                     <Button variant="outline" size="sm">
                       Record
@@ -562,7 +599,8 @@ function App() {
                   <div className="text-sm text-muted-foreground">
                     {cameraStatus.available ? (
                       <>
-                        {cameraStatus.resolution[0]}x{cameraStatus.resolution[1]} · {cameraStatus.fps} FPS · Backend: {cameraStatus.backend}
+                        {cameraStatus.resolution[0]}x{cameraStatus.resolution[1]} · {cameraStatus.fps} FPS · Backend: {useRpicam ? 'rpicam-vid (forced)' : cameraStatus.backend}
+                        {aiOverlay ? ' · AI: ON' : ' · AI: OFF'}
                       </>
                     ) : (
                       <>Camera offline</>
