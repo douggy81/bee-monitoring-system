@@ -86,10 +86,12 @@ function App() {
   const handleFullscreen = () => {
     const el = videoContainerRef.current
     if (!el) return
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.()
+    const doc = document
+    const isFs = doc.fullscreenElement || doc.webkitFullscreenElement || doc.mozFullScreenElement || doc.msFullscreenElement
+    if (isFs) {
+      (doc.exitFullscreen || doc.webkitExitFullscreen || doc.mozCancelFullScreen || doc.msExitFullscreen)?.call(doc)
     } else {
-      el.requestFullscreen?.()
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen || el.msRequestFullscreen)?.call(el)
     }
   }
   const streamUrl = useMemo(() => {
@@ -586,10 +588,10 @@ function App() {
                       <Eye className="w-4 h-4 mr-2" />
                       View Full Screen
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => setUseRpicam(v => !v)}>
+                    <Button variant="outline" size="sm" onClick={() => { setStreamError(false); setUseRpicam(v => !v) }}>
                       {useRpicam ? 'Use Picamera2' : 'Force rpicam-vid'}
                     </Button>
-                    <Button variant="outline" size="sm" onClick={() => setAiOverlay(v => !v)}>
+                    <Button variant="outline" size="sm" onClick={() => { setStreamError(false); setAiOverlay(v => !v) }}>
                       {aiOverlay ? 'Hide AI Detections' : 'Show AI Detections'}
                     </Button>
                     <Button variant="outline" size="sm">
