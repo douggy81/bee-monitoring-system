@@ -15,8 +15,19 @@ try:
     import cv2  # type: ignore
     _cv2_ok = True
 except Exception:
+    # Attempt to load OpenCV from system site-packages so venv can use apt-installed python3-opencv
     cv2 = None  # type: ignore
     _cv2_ok = False
+    try:
+        import sys as _sys
+        _alt = "/usr/lib/python3/dist-packages"
+        if _alt not in _sys.path:
+            _sys.path.append(_alt)
+        import cv2 as _cv2_try  # type: ignore
+        cv2 = _cv2_try  # type: ignore
+        _cv2_ok = True
+    except Exception:
+        pass
 
 
 logger = logging.getLogger(__name__)
