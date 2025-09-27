@@ -98,7 +98,15 @@ class CpuBackend:
 
         # Fallback to ONNX Runtime
         try:
-            import onnxruntime as ort  # type: ignore
+            try:
+                import onnxruntime as ort  # type: ignore
+            except Exception:
+                # Try system site-packages (e.g., python3-onnxruntime via apt on Raspberry Pi)
+                import sys as _sys
+                _alt = "/usr/lib/python3/dist-packages"
+                if _alt not in _sys.path:
+                    _sys.path.append(_alt)
+                import onnxruntime as ort  # type: ignore
             self.ort_session = ort.InferenceSession(weights, providers=['CPUExecutionProvider'])
             if not self.names:
                 # Try to load names from adjacent files or known defaults
@@ -370,6 +378,51 @@ class CpuBackend:
                 "class_name": cname,
             })
         return dets
+
+    # -----------------------------
+    # Names utilities
+    # -----------------------------
+    def _load_class_names(self, weights_path: str) -> Dict[int, str]:
+        """Attempt to load class names, preferring adjacent files, else use COCO names.
+        Returns a mapping {class_id: class_name}.
+        """
+        # 1) Try sibling files next to the weights
+        base, _ = os.path.splitext(weights_path)
+        candidates = [
+            base + ".names",
+            os.path.join(os.path.dirname(weights_path), "classes.names"),
+            os.path.join(os.path.dirname(weights_path), "classes.txt"),
+            # Project default
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "api", "models", "coco.names"),
+        ]
+        for p in candidates:
+            try:
+                if os.path.isfile(p):
+                    with open(p, "r", encoding="utf-8") as f:
+                        names = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+                    if names:
+                        return {i: n for i, n in enumerate(names)}
+            except Exception:
+                continue
+        # 2) If filename suggests standard YOLOv8 COCO model, return COCO-80 names
+        fname = os.path.basename(weights_path).lower()
+        if "yolov8" in fname:
+            return {i: n for i, n in enumerate(self._coco80_names())}
+        # 3) Fallback: numeric IDs
+        return {i: str(i) for i in range(80)}
+
+    def _coco80_names(self) -> List[str]:
+        # Standard YOLOv8 COCO class names (80 classes)
+        return [
+            "person","bicycle","car","motorcycle","airplane","bus","train","truck","boat","traffic light",
+            "fire hydrant","stop sign","parking meter","bench","bird","cat","dog","horse","sheep","cow",
+            "elephant","bear","zebra","giraffe","backpack","umbrella","handbag","tie","suitcase","frisbee",
+            "skis","snowboard","sports ball","kite","baseball bat","baseball glove","skateboard","surfboard","tennis racket","bottle",
+            "wine glass","cup","fork","knife","spoon","bowl","banana","apple","sandwich","orange",
+            "broccoli","carrot","hot dog","pizza","donut","cake","chair","couch","potted plant","bed",
+            "dining table","toilet","tv","laptop","mouse","remote","keyboard","cell phone","microwave","oven",
+            "toaster","sink","refrigerator","book","clock","vase","scissors","teddy bear","hair drier","toothbrush",
+        ]
 
     def _dnn_infer(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """Run OpenCV DNN on ONNX weights and return detection dicts."""
