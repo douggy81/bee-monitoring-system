@@ -30,6 +30,9 @@ logger = logging.getLogger(__name__)
 # Create blueprint
 bee_bp = Blueprint('bee_monitoring', __name__)
 
+# Global lock to prevent multiple concurrent Picamera2 streams
+_PICAM_STREAM_LOCK = threading.Lock()
+
 # Database path (shared with SQLAlchemy in api/main.py if BEE_DB_PATH is set)
 DB_PATH = os.environ.get(
     'BEE_DB_PATH',
@@ -338,9 +341,19 @@ def camera_stream():
                 yield from _stream_from_rpicam(q_w, q_h, q_fps)
                 return
 
+            # Try to acquire global Picamera2 stream lock; if busy, fall back to rpicam-vid
+            _got_lock = _PICAM_STREAM_LOCK.acquire(blocking=False)
+            if not _got_lock:
+                logger.info("Picamera2 stream is busy; serving rpicam-vid fallback")
+                yield from _stream_from_rpicam(q_w, q_h, q_fps)
+                return
             camera = CameraManager(resolution=(q_w, q_h), fps=q_fps)
-            # Try Picamera2 only; if not available, go to rpicam-vid fallback
+            # Try Picamera2 only; if not available, release lock and go to rpicam-vid fallback
             if not camera.initialize(allow_opencv_fallback=False):
+                try:
+                    _PICAM_STREAM_LOCK.release()
+                except Exception:
+                    pass
                 yield from _stream_from_rpicam(q_w, q_h, q_fps)
                 return
             try:
@@ -441,13 +454,18 @@ def camera_stream():
                             break
                     else:
                         empty_count += 1
-                        if empty_count >= 20:
+                        if empty_count >= 5:
                             logger.warning("No frames captured from CameraManager; switching to rpicam-vid fallback")
                             break
                         time.sleep(0.2)  # ~5 FPS
             finally:
                 camera.cleanup()
-                if empty_count >= 20:
+                # Always release the global stream lock
+                try:
+                    _PICAM_STREAM_LOCK.release()
+                except Exception:
+                    pass
+                if empty_count >= 5:
                     # Start rpicam-vid fallback stream
                     for part in _stream_from_rpicam(camera.resolution[0], camera.resolution[1], camera.fps):
                         yield part
