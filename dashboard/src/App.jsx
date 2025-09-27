@@ -109,6 +109,8 @@ function App() {
     params.push('lock_wait_ms=1500')
     // Ask backend to proactively terminate any previous stream
     params.push('terminate_prev=1')
+    // Cache buster to ensure the browser does not reuse a stale connection
+    params.push(`ts=${Date.now()}`)
     const qs = params.length ? `?${params.join('&')}` : ''
     return `/api/bee/camera/stream${qs}`
   }, [useRpicam, aiOverlay])

@@ -90,8 +90,8 @@ class CpuBackend:
             import onnxruntime as ort  # type: ignore
             self.ort_session = ort.InferenceSession(weights, providers=['CPUExecutionProvider'])
             if not self.names:
-                # default COCO-like placeholder names
-                self.names = {i: str(i) for i in range(80)}
+                # Try to load names from adjacent files or known defaults
+                self.names = self._load_class_names(weights)
             self.runtime = 'onnx'
             self.initialized = True
             logger.info("YOLOv8 (ONNXRuntime) initialized with %s", weights)
@@ -105,7 +105,7 @@ class CpuBackend:
                 raise RuntimeError("OpenCV not available for DNN fallback")
             self.dnn_net = cv2.dnn.readNetFromONNX(weights)  # type: ignore
             if not self.names:
-                self.names = {i: str(i) for i in range(80)}
+                self.names = self._load_class_names(weights)
             self.runtime = 'opencv_dnn'
             self.initialized = True
             logger.info("YOLOv8 (OpenCV DNN) initialized with %s", weights)
