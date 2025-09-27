@@ -82,6 +82,7 @@ function App() {
   const [useRpicam, setUseRpicam] = useState(false)
   const [aiOverlay, setAiOverlay] = useState(false)
   const [streamError, setStreamError] = useState(false)
+  const [isSwitching, setIsSwitching] = useState(false)
   const videoContainerRef = useRef(null)
   const handleFullscreen = () => {
     const el = videoContainerRef.current
@@ -107,6 +108,18 @@ function App() {
     const qs = params.length ? `?${params.join('&')}` : ''
     return `/api/bee/camera/stream${qs}`
   }, [useRpicam, aiOverlay])
+
+  // Swap to the new URL immediately and show a brief switching overlay.
+  // Note: onload is unreliable for endless MJPEG streams, so we time-cap the overlay.
+  const [currentStreamUrl, setCurrentStreamUrl] = useState(streamUrl)
+  useEffect(() => {
+    if (streamUrl === currentStreamUrl) return
+    setStreamError(false)
+    setIsSwitching(true)
+    setCurrentStreamUrl(streamUrl)
+    const id = setTimeout(() => setIsSwitching(false), 1200)
+    return () => clearTimeout(id)
+  }, [streamUrl, currentStreamUrl])
 
   const [alerts, setAlerts] = useState([
     {
@@ -564,15 +577,22 @@ function App() {
               <CardContent>
                 <div ref={videoContainerRef} className="relative bg-black rounded-lg overflow-hidden aspect-video">
                   <img
-                    src={streamUrl}
-                    key={streamUrl}
+                    src={currentStreamUrl}
                     alt="Live camera stream"
                     className="w-full h-full object-contain"
                     loading="eager"
                     onLoad={() => setStreamError(false)}
-                    onError={() => { setStreamError(true); setUseRpicam(true) }}
+                    onError={() => { setStreamError(true) }}
                   />
-                  {streamError && !useRpicam && (
+                  {(isSwitching) && (
+                    <div className="absolute inset-0 flex items-center justify-center text-center text-white/80 bg-black/40">
+                      <div>
+                        <p className="text-lg font-medium">Connecting…</p>
+                        <p className="text-sm opacity-75">Preparing stream</p>
+                      </div>
+                    </div>
+                  )}
+                  {streamError && !useRpicam && !isSwitching && (
                     <div className="absolute inset-0 flex items-center justify-center text-center text-white/80 bg-black/40">
                       <div>
                         <Camera className="w-16 h-16 mx-auto mb-4 opacity-50" />
