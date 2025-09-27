@@ -107,6 +107,8 @@ function App() {
     }
     // Always allow some wait time for PiCamera lock handover during stream switches
     params.push('lock_wait_ms=1500')
+    // Ask backend to proactively terminate any previous stream
+    params.push('terminate_prev=1')
     const qs = params.length ? `?${params.join('&')}` : ''
     return `/api/bee/camera/stream${qs}`
   }, [useRpicam, aiOverlay])

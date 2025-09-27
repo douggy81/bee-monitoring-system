@@ -32,6 +32,8 @@ bee_bp = Blueprint('bee_monitoring', __name__)
 
 # Global lock to prevent multiple concurrent Picamera2 streams
 _PICAM_STREAM_LOCK = threading.Lock()
+# Global stop signal to proactively terminate an active Picamera2 stream
+_PICAM_STOP_EVENT = threading.Event()
 
 # Database path (shared with SQLAlchemy in api/main.py if BEE_DB_PATH is set)
 DB_PATH = os.environ.get(
@@ -256,6 +258,7 @@ def camera_stream():
         ai_async = request.args.get('ai_async', '1').lower() in ('1', 'true', 'yes')
         ai_interval_ms = request.args.get('ai_interval_ms', type=int) or 500
         lock_wait_ms = request.args.get('lock_wait_ms', type=int) or 1500
+        terminate_prev = request.args.get('terminate_prev', '1').lower() in ('1', 'true', 'yes')
 
         def _stream_from_rpicam(width: int, height: int, fps: int):
             """Fallback: stream MJPEG by spawning rpicam-vid and parsing JPEG frames."""
@@ -342,12 +345,17 @@ def camera_stream():
                 yield from _stream_from_rpicam(q_w, q_h, q_fps)
                 return
 
+            # Proactively request the current stream to stop, if any
+            if terminate_prev:
+                _PICAM_STOP_EVENT.set()
             # Try to acquire global Picamera2 stream lock; if busy, wait up to lock_wait_ms
             _got_lock = _PICAM_STREAM_LOCK.acquire(timeout=float(lock_wait_ms) / 1000.0)
             if not _got_lock:
                 logger.info("Picamera2 stream is busy; continuing to wait for lock")
                 # Block until available rather than spawning rpicam (which also needs the camera)
                 _PICAM_STREAM_LOCK.acquire()
+            # We now exclusively own the stream; clear the stop signal so we don't stop ourselves
+            _PICAM_STOP_EVENT.clear()
             camera = CameraManager(resolution=(q_w, q_h), fps=q_fps)
             # Try Picamera2 only; if not available, release lock and go to rpicam-vid fallback
             if not camera.initialize(allow_opencv_fallback=False):
@@ -385,6 +393,10 @@ def camera_stream():
                             last_dets = res
                             last_infer_ts = time.time()
                 while True:
+                    # If a new request asked us to stop, exit quickly to release the lock
+                    if _PICAM_STOP_EVENT.is_set():
+                        logger.info("Stream stop requested; closing Picamera2 stream")
+                        break
                     frame = camera.capture_frame()
                     if frame is not None:
                         empty_count = 0
