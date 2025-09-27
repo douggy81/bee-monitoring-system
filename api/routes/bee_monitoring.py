@@ -255,6 +255,7 @@ def camera_stream():
         ai_stride = request.args.get('ai_stride', type=int) or 3
         ai_async = request.args.get('ai_async', '1').lower() in ('1', 'true', 'yes')
         ai_interval_ms = request.args.get('ai_interval_ms', type=int) or 500
+        lock_wait_ms = request.args.get('lock_wait_ms', type=int) or 1500
 
         def _stream_from_rpicam(width: int, height: int, fps: int):
             """Fallback: stream MJPEG by spawning rpicam-vid and parsing JPEG frames."""
@@ -341,12 +342,12 @@ def camera_stream():
                 yield from _stream_from_rpicam(q_w, q_h, q_fps)
                 return
 
-            # Try to acquire global Picamera2 stream lock; if busy, fall back to rpicam-vid
-            _got_lock = _PICAM_STREAM_LOCK.acquire(blocking=False)
+            # Try to acquire global Picamera2 stream lock; if busy, wait up to lock_wait_ms
+            _got_lock = _PICAM_STREAM_LOCK.acquire(timeout=float(lock_wait_ms) / 1000.0)
             if not _got_lock:
-                logger.info("Picamera2 stream is busy; serving rpicam-vid fallback")
-                yield from _stream_from_rpicam(q_w, q_h, q_fps)
-                return
+                logger.info("Picamera2 stream is busy; continuing to wait for lock")
+                # Block until available rather than spawning rpicam (which also needs the camera)
+                _PICAM_STREAM_LOCK.acquire()
             camera = CameraManager(resolution=(q_w, q_h), fps=q_fps)
             # Try Picamera2 only; if not available, release lock and go to rpicam-vid fallback
             if not camera.initialize(allow_opencv_fallback=False):
