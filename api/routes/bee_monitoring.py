@@ -578,6 +578,57 @@ def ai_detect():
         logger.error(f"AI detect error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+
+@bee_bp.route('/ai/status', methods=['GET'])
+def ai_status():
+    """Return AI backend readiness and configuration details.
+    Response JSON:
+      {
+        ready: bool,
+        runtime: "ultra" | "onnx" | "opencv_dnn" | null,
+        weights_path: string | null,
+        names_count: int,
+        conf: float,
+        iou: float,
+        imgsz: int,
+        onnxruntime_version: string (when runtime == 'onnx'),
+        timestamp: string,
+        error?: string
+      }
+    """
+    try:
+        backend = _get_cpu_backend()
+        if backend is None:
+            return jsonify({
+                'ready': False,
+                'runtime': None,
+                'weights_path': None,
+                'names_count': 0,
+                'timestamp': datetime.now().isoformat(),
+                'error': 'backend_unavailable'
+            })
+
+        resp: Dict[str, Any] = {
+            'ready': bool(getattr(backend, 'initialized', False)),
+            'runtime': getattr(backend, 'runtime', None),
+            'weights_path': getattr(backend, 'model_path', None),
+            'names_count': len(getattr(backend, 'names', {}) or {}),
+            'conf': float(getattr(backend, 'conf', 0.0)),
+            'iou': float(getattr(backend, 'iou', 0.0)),
+            'imgsz': int(getattr(backend, 'imgsz', 0) or 0),
+            'timestamp': datetime.now().isoformat(),
+        }
+        if resp['runtime'] == 'onnx':
+            try:
+                import onnxruntime as ort  # type: ignore
+                resp['onnxruntime_version'] = getattr(ort, '__version__', 'unknown')
+            except Exception:
+                pass
+        return jsonify(resp)
+    except Exception as e:
+        logger.error(f"AI status error: {e}")
+        return jsonify({'ready': False, 'error': str(e), 'timestamp': datetime.now().isoformat()}), 500
+
 @bee_bp.route('/camera/snapshot')
 def camera_snapshot():
     """Return a single camera snapshot as base64 JSON."""

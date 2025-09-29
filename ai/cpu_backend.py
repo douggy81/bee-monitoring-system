@@ -89,6 +89,7 @@ class CpuBackend:
                     self.names = {i: n for i, n in enumerate(self.model.names)}
                 else:
                     self.names = dict(self.model.names)
+            self.model_path = weights
             self.runtime = 'ultra'
             self.initialized = True
             logger.info("YOLOv8 (Ultralytics) initialized with %s", weights)
@@ -96,21 +97,19 @@ class CpuBackend:
         except Exception as e:
             logger.warning("Ultralytics unavailable (%s). Falling back to ONNX Runtime.", e)
 
-        # Fallback to ONNX Runtime
+        # Fallback to ONNX Runtime (venv only; do not pull system onnxruntime)
         try:
+            import onnxruntime as ort  # type: ignore
             try:
-                import onnxruntime as ort  # type: ignore
+                ver = getattr(ort, '__version__', 'unknown')
+                logger.info("ONNXRuntime detected: %s", ver)
             except Exception:
-                # Try system site-packages (e.g., python3-onnxruntime via apt on Raspberry Pi)
-                import sys as _sys
-                _alt = "/usr/lib/python3/dist-packages"
-                if _alt not in _sys.path:
-                    _sys.path.append(_alt)
-                import onnxruntime as ort  # type: ignore
+                pass
             self.ort_session = ort.InferenceSession(weights, providers=['CPUExecutionProvider'])
             if not self.names:
                 # Try to load names from adjacent files or known defaults
                 self.names = self._load_class_names(weights)
+            self.model_path = weights
             self.runtime = 'onnx'
             self.initialized = True
             logger.info("YOLOv8 (ONNXRuntime) initialized with %s", weights)
@@ -125,6 +124,7 @@ class CpuBackend:
             self.dnn_net = cv2.dnn.readNetFromONNX(weights)  # type: ignore
             if not self.names:
                 self.names = self._load_class_names(weights)
+            self.model_path = weights
             self.runtime = 'opencv_dnn'
             self.initialized = True
             logger.info("YOLOv8 (OpenCV DNN) initialized with %s", weights)
