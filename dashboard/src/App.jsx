@@ -125,11 +125,10 @@ function App() {
     setIsSwitching(true)
     setCurrentStreamUrl(streamUrl)
     setRetryCount(0)
-    // Dynamic timeout: longer for retries, with exponential backoff
-    const timeout = retryCount > 0 ? Math.min(3000, 1200 * Math.pow(1.5, retryCount)) : 1500
-    const id = setTimeout(() => setIsSwitching(false), timeout)
+    // Fixed timeout: 800ms is enough for stream to start rendering
+    const id = setTimeout(() => setIsSwitching(false), 800)
     return () => clearTimeout(id)
-  }, [streamUrl, currentStreamUrl, retryCount])
+  }, [streamUrl, currentStreamUrl])
 
   const [alerts, setAlerts] = useState([
     {
@@ -591,7 +590,11 @@ function App() {
                     alt="Live camera stream"
                     className="w-full h-full object-contain"
                     loading="eager"
-                    onLoad={() => { setStreamError(false); setRetryCount(0) }}
+                    onLoad={() => { 
+                      setStreamError(false)
+                      setRetryCount(0)
+                      setIsSwitching(false)  // Clear connecting overlay immediately
+                    }}
                     onError={() => { 
                       setStreamError(true)
                       setRetryCount(prev => prev + 1)
