@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import List, Tuple, Optional, Dict, Any
 import os
 import logging
+import threading
 import numpy as np
 try:
     import cv2  # type: ignore
@@ -61,6 +62,8 @@ class CpuBackend:
         self.conf = conf_threshold
         self.iou = iou_threshold
         self.classes = classes
+        # STABILITY: Thread safety for concurrent inference calls
+        self._infer_lock = threading.Lock()
 
     def _resolve_default_model_path(self) -> str:
         # Prefer ONNX to avoid requiring PyTorch on target device
@@ -191,10 +194,18 @@ class CpuBackend:
     def infer_full(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """Run inference and return list of detection dicts:
         {bbox:[x,y,w,h], confidence:float, class_id:int, class_name:str}
+        
+        Thread-safe for concurrent calls from multiple stream clients.
         """
         if not self.initialized:
             return []
 
+        # STABILITY: Ensure thread-safe inference
+        with self._infer_lock:
+            return self._infer_full_unsafe(frame)
+    
+    def _infer_full_unsafe(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        """Internal inference implementation (not thread-safe, caller must hold lock)."""
         if self.runtime == 'ultra' and self.model is not None:
             try:
                 results = self.model(

@@ -107,18 +107,19 @@ class HailoBackend:
 
     def infer_full(self, frame) -> List[Dict[str, Any]]:
         """Return detection dicts like CPU backend: [{bbox, confidence, class_id, class_name}].
-        Placeholder implementation uses pseudo detections from infer().
+        
+        SAFETY: Placeholder detections disabled until real HailoRT Python vstreams are implemented.
+        Random detections cause visual instability and should not be used in production.
         """
         if not self.initialized:
             return []
-        boxes, scores = self.infer(frame)
-        dets: List[Dict[str, Any]] = []
-        for i in range(min(len(boxes), len(scores))):
-            x, y, w, h = boxes[i]
-            dets.append({
-                "bbox": [int(x), int(y), int(w), int(h)],
-                "confidence": float(scores[i]),
-                "class_id": 0,
-                "class_name": "hailo",
-            })
-        return dets
+        
+        # DISABLED: Placeholder random detections (causes stream instability)
+        # TODO: Implement real HailoRT Python API inference with:
+        #   - HEF loading via hailo.hailort.HEF()
+        #   - Network group configuration
+        #   - Input/output vstreams setup
+        #   - Preprocessing: letterbox, normalize, BGR->RGB, NHWC->NCHW
+        #   - Postprocessing: parse YOLO output, NMS, class mapping
+        logger.debug("Hailo backend is scaffold-only; returning empty detections until HailoRT is implemented")
+        return []

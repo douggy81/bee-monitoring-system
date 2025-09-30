@@ -83,6 +83,7 @@ function App() {
   const [aiOverlay, setAiOverlay] = useState(false)
   const [streamError, setStreamError] = useState(false)
   const [isSwitching, setIsSwitching] = useState(false)
+  const [retryCount, setRetryCount] = useState(0)
   const videoContainerRef = useRef(null)
   const handleFullscreen = () => {
     const el = videoContainerRef.current
@@ -99,11 +100,11 @@ function App() {
     const params = []
     if (useRpicam) params.push('source=rpicam')
     if (aiOverlay) {
-      // Enable AI overlay with non-blocking inference for smoother stream
+      // STABILITY: Enable AI overlay with conservative settings for Raspberry Pi
       params.push('ai=1')
-      params.push('ai_stride=5')
+      params.push('ai_stride=8')  // Run inference every 8th frame (~4 FPS at 30fps)
       params.push('ai_async=1')
-      params.push('ai_interval_ms=400')
+      params.push('ai_interval_ms=600')  // Min 600ms between inferences (was 400ms)
     }
     // Always allow some wait time for PiCamera lock handover during stream switches
     params.push('lock_wait_ms=1500')
@@ -115,7 +116,7 @@ function App() {
     return `/api/bee/camera/stream${qs}`
   }, [useRpicam, aiOverlay])
 
-  // Swap to the new URL immediately and show a brief switching overlay.
+  // STABILITY: Swap to the new URL with exponential backoff retry logic
   // Note: onload is unreliable for endless MJPEG streams, so we time-cap the overlay.
   const [currentStreamUrl, setCurrentStreamUrl] = useState(streamUrl)
   useEffect(() => {
@@ -123,9 +124,12 @@ function App() {
     setStreamError(false)
     setIsSwitching(true)
     setCurrentStreamUrl(streamUrl)
-    const id = setTimeout(() => setIsSwitching(false), 1200)
+    setRetryCount(0)
+    // Dynamic timeout: longer for retries, with exponential backoff
+    const timeout = retryCount > 0 ? Math.min(3000, 1200 * Math.pow(1.5, retryCount)) : 1500
+    const id = setTimeout(() => setIsSwitching(false), timeout)
     return () => clearTimeout(id)
-  }, [streamUrl, currentStreamUrl])
+  }, [streamUrl, currentStreamUrl, retryCount])
 
   const [alerts, setAlerts] = useState([
     {
@@ -587,8 +591,18 @@ function App() {
                     alt="Live camera stream"
                     className="w-full h-full object-contain"
                     loading="eager"
-                    onLoad={() => setStreamError(false)}
-                    onError={() => { setStreamError(true) }}
+                    onLoad={() => { setStreamError(false); setRetryCount(0) }}
+                    onError={() => { 
+                      setStreamError(true)
+                      setRetryCount(prev => prev + 1)
+                      // STABILITY: Auto-retry up to 3 times with exponential backoff
+                      if (retryCount < 3) {
+                        setTimeout(() => {
+                          setStreamError(false)
+                          setCurrentStreamUrl(`${streamUrl}&retry=${Date.now()}`)
+                        }, Math.min(5000, 1000 * Math.pow(2, retryCount)))
+                      }
+                    }}
                   />
                   {(isSwitching) && (
                     <div className="absolute inset-0 flex items-center justify-center text-center text-white/80 bg-black/40">

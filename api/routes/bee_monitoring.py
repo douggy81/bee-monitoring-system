@@ -440,8 +440,18 @@ def camera_stream():
                         if ai_on and backend is not None:
                             if ai_async:
                                 can_launch = (infer_thread is None) or (not infer_thread.is_alive())
+                                # STABILITY: Join finished threads to prevent memory leaks
+                                if infer_thread is not None and not infer_thread.is_alive():
+                                    try:
+                                        infer_thread.join(timeout=0.1)
+                                    except Exception:
+                                        pass
+                                    infer_thread = None
+                                    can_launch = True
+                                
                                 elapsed_ms = (time.time() - last_infer_ts) * 1000.0
-                                if can_launch and elapsed_ms >= float(ai_interval_ms):
+                                # STABILITY: Timeout check - don't queue if inference is stuck (>5s)
+                                if can_launch and elapsed_ms >= float(ai_interval_ms) and elapsed_ms < 5000:
                                     try:
                                         # copy current frame for background inference
                                         img_copy = frame.copy()
@@ -502,6 +512,18 @@ def camera_stream():
                         time.sleep(0.2)  # ~5 FPS
             finally:
                 camera.cleanup()
+                # STABILITY: Clean up AI backend resources
+                if backend is not None and hasattr(backend, 'close'):
+                    try:
+                        backend.close()
+                    except Exception as cleanup_err:
+                        logger.warning(f"Backend cleanup error: {cleanup_err}")
+                # STABILITY: Join inference thread if still running
+                if infer_thread is not None and infer_thread.is_alive():
+                    try:
+                        infer_thread.join(timeout=1.0)
+                    except Exception:
+                        pass
                 # Always release the global stream lock
                 try:
                     _PICAM_STREAM_LOCK.release()
