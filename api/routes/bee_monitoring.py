@@ -512,12 +512,8 @@ def camera_stream():
                         time.sleep(0.2)  # ~5 FPS
             finally:
                 camera.cleanup()
-                # STABILITY: Clean up AI backend resources
-                if backend is not None and hasattr(backend, 'close'):
-                    try:
-                        backend.close()
-                    except Exception as cleanup_err:
-                        logger.warning(f"Backend cleanup error: {cleanup_err}")
+                # NOTE: Do NOT call backend.close() - backend is globally cached and shared across requests
+                # Only clean up the inference thread
                 # STABILITY: Join inference thread if still running
                 if infer_thread is not None and infer_thread.is_alive():
                     try:

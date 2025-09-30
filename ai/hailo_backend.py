@@ -31,7 +31,13 @@ class HailoBackend:
         # Ensure logs go to writable directory to avoid warnings
         env.setdefault("HAILORT_LOG_DIR", "/tmp")
         # Ensure HOME points to a writable path so Hailo can create ~/.hailo
-        env["HOME"] = os.getenv("HAILO_HOME", "/opt/bee-monitoring/data")
+        # Use /tmp to avoid permissions issues with /opt/bee-monitoring
+        env["HOME"] = os.getenv("HAILO_HOME", "/tmp/hailo_home")
+        # Create the directory if it doesn't exist
+        try:
+            os.makedirs(env["HOME"], exist_ok=True)
+        except Exception:
+            pass
         # Ensure PATH contains system bins (hailortcli may invoke 'hostname')
         sys_path = "/usr/bin:/bin"
         env["PATH"] = f"{sys_path}:{env.get('PATH', '')}"
@@ -96,9 +102,18 @@ class HailoBackend:
     def get_version_info(self) -> Dict[str, Any]:
         info: Dict[str, Any] = {}
         try:
-            out = subprocess.check_output(["/usr/bin/hailortcli", "--version"], text=True, stderr=subprocess.STDOUT, timeout=5)
-            first = out.strip().splitlines()[0] if out else ""
-            info["hailort_version"] = first
+            # Use _run_cli to get version with proper env setup
+            rc, out, err = self._run_cli(["/usr/bin/hailortcli", "--version"])
+            if rc == 0:
+                first = out.strip().splitlines()[0] if out else ""
+                info["hailort_version"] = first
+            else:
+                # If failed, try to extract version from error (sometimes it's in stderr)
+                combined = (out + err).strip()
+                for line in combined.splitlines():
+                    if "version" in line.lower() or "hailort" in line.lower():
+                        info["hailort_version"] = line.strip()
+                        break
         except Exception:
             pass
         info["hef_path"] = self.hef_path
