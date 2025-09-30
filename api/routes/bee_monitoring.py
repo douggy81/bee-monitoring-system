@@ -179,6 +179,28 @@ def _get_cpu_backend():
         logger.warning(f"CpuBackend import/init failed: {e}")
         return None
 
+# Hailo backend (lazy)
+_hailo_backend = None  # type: ignore
+
+def _get_hailo_backend():
+    """Load and cache the Hailo backend lazily. Returns None if unavailable."""
+    global _hailo_backend
+    if _hailo_backend is not None:
+        return _hailo_backend
+    try:
+        from ai.hailo_backend import HailoBackend  # type: ignore
+        # Use env var if provided and exists, else None (backend can still init to check device)
+        hef_env = os.environ.get('HAILO_HEF')
+        hef_path = hef_env if (hef_env and os.path.isfile(hef_env)) else None
+        hb = HailoBackend(hef_path=hef_path)
+        if hb.initialize():
+            _hailo_backend = hb
+            return _hailo_backend
+        return None
+    except Exception as e:
+        logger.warning(f"HailoBackend import/init failed: {e}")
+        return None
+
 @bee_bp.route('/health', methods=['GET'])
 def health_check():
     """API health check endpoint"""
@@ -257,6 +279,7 @@ def camera_stream():
         ai_stride = request.args.get('ai_stride', type=int) or 3
         ai_async = request.args.get('ai_async', '1').lower() in ('1', 'true', 'yes')
         ai_interval_ms = request.args.get('ai_interval_ms', type=int) or 500
+        ai_backend_sel = (request.args.get('ai_backend', 'auto') or 'auto').lower()
         lock_wait_ms = request.args.get('lock_wait_ms', type=int) or 1500
         terminate_prev = request.args.get('terminate_prev', '1').lower() in ('1', 'true', 'yes')
 
@@ -376,7 +399,13 @@ def camera_stream():
                 infer_lock = threading.Lock()
                 frame_index = 0
                 if ai_on:
-                    backend = _get_cpu_backend()
+                    # Select backend according to ai_backend_sel
+                    if ai_backend_sel == 'hailo':
+                        backend = _get_hailo_backend()
+                    elif ai_backend_sel == 'cpu':
+                        backend = _get_cpu_backend()
+                    else:  # auto prefers CPU until Hailo real inference is ready
+                        backend = _get_cpu_backend() or _get_hailo_backend()
                     if backend is None:
                         logger.warning("AI overlay requested but backend unavailable; continuing without overlay")
                         ai_on = False
@@ -501,7 +530,7 @@ def camera_stream():
 
 @bee_bp.route('/ai/detect', methods=['GET'])
 def ai_detect():
-    """Run YOLOv8 CPU inference on a single camera frame.
+    """Run AI inference on a single camera frame (CPU or Hailo).
     Query params:
       - annotate: 0/1 to include an annotated image (base64) in the response
       - conf: confidence threshold (e.g., 0.25)
@@ -516,11 +545,18 @@ def ai_detect():
     """
     try:
         # Load backend (and optionally tweak thresholds)
-        backend = _get_cpu_backend()
+        ai_backend_sel = (request.args.get('ai_backend', 'auto') or 'auto').lower()
+        backend = None
+        if ai_backend_sel == 'hailo':
+            backend = _get_hailo_backend()
+        elif ai_backend_sel == 'cpu':
+            backend = _get_cpu_backend()
+        else:
+            backend = _get_cpu_backend() or _get_hailo_backend()
         if backend is None:
             return jsonify({
                 'success': False,
-                'error': 'YOLOv8 CPU backend not available. Install ultralytics and ensure yolov8n.pt exists.'
+                'error': 'AI backend not available (hailo/cpu)'
             }), 503
 
         conf = request.args.get('conf', type=float)
@@ -547,7 +583,7 @@ def ai_detect():
 
         out = {
             'success': True,
-            'backend': 'yolov8_cpu',
+            'backend': (getattr(backend, 'runtime', None) or ('hailo' if hasattr(backend, 'get_version_info') else 'cpu')),
             'detections': detections,
             'timestamp': datetime.now().isoformat(),
         }
@@ -624,6 +660,23 @@ def ai_status():
                 resp['onnxruntime_version'] = getattr(ort, '__version__', 'unknown')
             except Exception:
                 pass
+        # Also include Hailo status (if available)
+        try:
+            hb = _get_hailo_backend()
+            hailo_info: Dict[str, Any] = {
+                'ready': bool(hb and getattr(hb, 'initialized', False)),
+                'hef_path': (hb.hef_path if hb else None),
+            }
+            try:
+                if hb:
+                    info = hb.get_version_info()
+                    if isinstance(info, dict):
+                        hailo_info.update(info)
+            except Exception:
+                pass
+            resp['hailo'] = hailo_info
+        except Exception:
+            resp['hailo'] = {'ready': False}
         return jsonify(resp)
     except Exception as e:
         logger.error(f"AI status error: {e}")

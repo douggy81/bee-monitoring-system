@@ -9,17 +9,22 @@ For now, we generate placeholder detections after verifying the device is reacha
 """
 from __future__ import annotations
 
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict, Any
 import os
 import subprocess
 import numpy as np
 import logging
 
-
+logger = logging.getLogger(__name__)
 class HailoBackend:
     def __init__(self, hef_path: Optional[str] = None) -> None:
         self.hef_path = hef_path
         self.initialized = False
+        # Align interface with CpuBackend
+        self.runtime = 'hailo'
+        self.conf: float = 0.25
+        self.iou: float = 0.45
+        self.imgsz: int = 640
 
     def _run_cli(self, args: List[str]) -> Tuple[int, str, str]:
         env = dict(os.environ)
@@ -38,19 +43,19 @@ class HailoBackend:
         # Verify hailortcli present (absolute path to avoid PATH issues under systemd)
         hailortcli_path = "/usr/bin/hailortcli"
         if not os.path.exists(hailortcli_path):
-            logging.warning("hailortcli not found at %s", hailortcli_path)
+            logger.warning("hailortcli not found at %s", hailortcli_path)
             return False
 
         # Identify device to confirm basic connectivity
         rc, out, err = self._run_cli([hailortcli_path, "fw-control", "identify"])
         if rc != 0:
-            logging.warning("hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
+            logger.warning("hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
             # Try with sudo as fallback
             sudo_path = "/usr/bin/sudo"
             if os.path.exists(sudo_path):
                 rc, out, err = self._run_cli([sudo_path, "env", "HAILORT_LOG_DIR=/tmp", hailortcli_path, "fw-control", "identify"])
                 if rc != 0:
-                    logging.warning("sudo hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
+                    logger.warning("sudo hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
             if rc != 0:
                 return False
 
@@ -84,3 +89,36 @@ class HailoBackend:
 
     def close(self) -> None:
         self.initialized = False
+
+    # -----------------------------
+    # Status helpers
+    # -----------------------------
+    def get_version_info(self) -> Dict[str, Any]:
+        info: Dict[str, Any] = {}
+        try:
+            out = subprocess.check_output(["/usr/bin/hailortcli", "--version"], text=True, stderr=subprocess.STDOUT, timeout=5)
+            first = out.strip().splitlines()[0] if out else ""
+            info["hailort_version"] = first
+        except Exception:
+            pass
+        info["hef_path"] = self.hef_path
+        info["ready"] = bool(self.initialized)
+        return info
+
+    def infer_full(self, frame) -> List[Dict[str, Any]]:
+        """Return detection dicts like CPU backend: [{bbox, confidence, class_id, class_name}].
+        Placeholder implementation uses pseudo detections from infer().
+        """
+        if not self.initialized:
+            return []
+        boxes, scores = self.infer(frame)
+        dets: List[Dict[str, Any]] = []
+        for i in range(min(len(boxes), len(scores))):
+            x, y, w, h = boxes[i]
+            dets.append({
+                "bbox": [int(x), int(y), int(w), int(h)],
+                "confidence": float(scores[i]),
+                "class_id": 0,
+                "class_name": "hailo",
+            })
+        return dets
