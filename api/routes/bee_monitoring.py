@@ -394,7 +394,7 @@ def camera_stream():
                 ai_on = ai_enabled
                 backend = None
                 last_dets = []
-                last_infer_ts = 0.0
+                last_infer_ts = time.time()  # Initialize to now, not 0
                 infer_thread = None
                 infer_lock = threading.Lock()
                 frame_index = 0
@@ -409,12 +409,16 @@ def camera_stream():
                     if backend is None:
                         logger.warning("AI overlay requested but backend unavailable; continuing without overlay")
                         ai_on = False
+                    else:
+                        logger.info(f"AI overlay enabled with backend: {backend.runtime}, async: {ai_async}, stride: {ai_stride}")
                 # Define async inference runner if enabled
                 if ai_on and backend is not None and ai_async:
                     def _run_infer(img_bgr):
                         nonlocal last_dets, last_infer_ts
                         try:
                             res = backend.infer_full(img_bgr)
+                            if res:
+                                logger.debug(f"Async inference returned {len(res)} detections")
                         except Exception as infer_err:
                             logger.warning(f"AI overlay inference failed: {infer_err}")
                             res = []
@@ -457,6 +461,8 @@ def camera_stream():
                                         img_copy = frame.copy()
                                         infer_thread = threading.Thread(target=_run_infer, args=(img_copy,), daemon=True)
                                         infer_thread.start()
+                                        if frame_index % 30 == 0:
+                                            logger.debug(f"Launched async inference thread at frame {frame_index}")
                                     except Exception as th_err:
                                         logger.warning(f"Failed to start async inference: {th_err}")
                                 # use last available detections without blocking
@@ -477,6 +483,8 @@ def camera_stream():
                             # Encode JPEG via Pillow
                             bio = BytesIO()
                             if ai_on and dets_to_draw:
+                                if frame_index % 30 == 0:  # Log every 30 frames (~1 second)
+                                    logger.debug(f"Drawing {len(dets_to_draw)} detections on frame {frame_index}")
                                 img = Image.fromarray(rgb)
                                 draw = ImageDraw.Draw(img)
                                 for det in dets_to_draw:

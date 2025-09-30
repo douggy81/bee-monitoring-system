@@ -69,18 +69,29 @@ class CpuBackend:
         # Prefer ONNX to avoid requiring PyTorch on target device
         here = os.path.dirname(os.path.abspath(__file__))
         root = os.path.abspath(os.path.join(here, os.pardir))
-        onnx_path = os.path.join(root, "api", "models", "yolov8n.onnx")
-        pt_path = os.path.join(root, "api", "models", "yolov8n.pt")
-        return onnx_path if os.path.isfile(onnx_path) else pt_path
+        # Prefer YOLO11n (latest), fallback to YOLOv8n
+        yolo11_onnx = os.path.join(root, "api", "models", "yolo11n.onnx")
+        yolo11_pt = os.path.join(root, "api", "models", "yolo11n.pt")
+        yolo8_onnx = os.path.join(root, "api", "models", "yolov8n.onnx")
+        yolo8_pt = os.path.join(root, "api", "models", "yolov8n.pt")
+        
+        if os.path.isfile(yolo11_onnx):
+            return yolo11_onnx
+        elif os.path.isfile(yolo11_pt):
+            return yolo11_pt
+        elif os.path.isfile(yolo8_onnx):
+            return yolo8_onnx
+        else:
+            return yolo8_pt
 
     def initialize(self) -> bool:
-        """Initialize YOLOv8 via Ultralytics if available, else ONNX Runtime.
+        """Initialize YOLO (v8/v11) via Ultralytics if available, else ONNX Runtime.
 
         Returns True if loaded, False otherwise.
         """
         weights = self.model_path or self._resolve_default_model_path()
         if not os.path.isfile(weights):
-            logger.error("YOLOv8 weights not found at %s", weights)
+            logger.error("YOLO weights not found at %s", weights)
             return False
 
         # Try Ultralytics (requires torch)
