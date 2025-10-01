@@ -251,23 +251,32 @@ class HailoBackend:
         with self._infer_lock:
             try:
                 # Preprocess frame
+                logger.debug(f"Preprocessing frame: {frame.shape}")
                 input_data = self._preprocess(frame)
+                logger.debug(f"Preprocessed input: {list(input_data.keys())}, shape: {list(input_data.values())[0].shape}")
                 
                 # Run inference with vstreams
-                with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
-                    # Send input
-                    infer_pipeline.send(input_data)
-                    
-                    # Receive output
-                    output_data = infer_pipeline.recv()
+                logger.debug(f"Creating InferVStreams...")
+                # Activate network group before running inference
+                with self.network_group.activate(self.network_group_params):
+                    with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
+                        logger.debug(f"Running inference...")
+                        # Run inference (blocking call)
+                        output_data = infer_pipeline.infer(input_data)
+                        logger.debug(f"Inference complete, output type: {type(output_data)}")
                 
                 # Postprocess output to get detections
+                logger.debug(f"Postprocessing...")
                 detections = self._postprocess(output_data, frame.shape)
                 
+                logger.debug(f"Inference complete: {len(detections)} detections")
                 return detections
                 
             except Exception as e:
-                logger.warning(f"Hailo inference failed: {e}")
+                logger.error(f"Hailo inference failed: {e}")
+                logger.error(f"Exception type: {type(e)}")
+                import traceback
+                logger.error(f"Traceback:\n{traceback.format_exc()}")
                 return []
     
     def _preprocess(self, frame) -> Dict[str, np.ndarray]:
@@ -287,7 +296,11 @@ class HailoBackend:
         input_data = np.expand_dims(input_image, axis=0).astype(np.uint8)
         
         # Return dict with input name (get from first input vstream param)
-        input_name = self.input_vstreams_params[0].name
+        # input_vstreams_params is a dict, not a list
+        if isinstance(self.input_vstreams_params, dict):
+            input_name = list(self.input_vstreams_params.keys())[0]
+        else:
+            input_name = self.input_vstreams_params[0].name
         return {input_name: input_data}
     
     def _letterbox(self, image, new_shape=(640, 640)):
@@ -331,25 +344,103 @@ class HailoBackend:
         
         try:
             # Get output tensors (multiple outputs for YOLO)
-            # Typical YOLO has 3 outputs at different scales
             output_names = list(output_data.keys())
+            
+            # Debug output information (only at debug level)
+            logger.debug(f"Hailo output: {len(output_names)} tensors")
+            logger.debug(f"Output names: {output_names}")
             
             # Check if post-processed (has bboxes directly) or raw
             if len(output_names) == 1:
                 # Likely post-processed output
                 output = output_data[output_names[0]]
+                logger.debug(f"Single output detected - checking format...")
+                
+                # Check if it's Hailo NMS format (list of arrays, one per class)
+                if isinstance(output, list):
+                    # Hailo sometimes wraps output in an extra list
+                    if len(output) == 1 and isinstance(output[0], list):
+                        logger.info(f"Detected Hailo NMS format (wrapped, {len(output[0])} classes)")
+                        detections = self._parse_hailo_nms_output(output[0], original_shape)
+                    else:
+                        logger.info(f"Detected Hailo NMS format (list of {len(output)} classes)")
+                        detections = self._parse_hailo_nms_output(output, original_shape)
                 # Format: [num_detections, 6] where each row is [x1, y1, x2, y2, conf, class_id]
-                if output.ndim == 2 and output.shape[1] >= 6:
+                elif output.ndim == 2 and output.shape[1] >= 6:
+                    logger.info(f"Detected post-processed format: {output.shape}")
                     detections = self._parse_postprocessed_output(output, original_shape)
+                else:
+                    logger.warning(f"Unexpected single output shape: {output.shape}")
+                    # Try to handle it anyway
+                    if output.ndim == 2:
+                        logger.info(f"Attempting to parse as detection output...")
+                        detections = self._parse_postprocessed_output(output, original_shape)
             else:
                 # Raw YOLO output - needs NMS
-                # For now, log and return empty
-                logger.warning(f"Raw YOLO output detected ({len(output_names)} tensors) - NMS implementation needed")
+                logger.warning(f"Raw YOLO output detected ({len(output_names)} tensors)")
+                logger.warning(f"Raw YOLO postprocessing not yet implemented")
+                # TODO: Implement raw YOLO NMS
+            
+            logger.debug(f"Postprocess result: {len(detections)} detections")
             
         except Exception as e:
             logger.error(f"Postprocessing failed: {e}")
             import traceback
             traceback.print_exc()
+        
+        return detections
+    
+    def _parse_hailo_nms_output(self, output_list: list, original_shape: Tuple[int, int, int]) -> List[Dict[str, Any]]:
+        """
+        Parse Hailo NMS format output.
+        
+        Hailo NMS format is a list where each element corresponds to a class:
+        - output_list[class_id] = numpy array of shape [num_detections, 5]
+        - Each detection: [y_min, x_min, y_max, x_max, confidence]
+        """
+        detections = []
+        h_orig, w_orig = original_shape[:2]
+        
+        # Scale factors (assuming letterboxed to 640x640)
+        scale_x = w_orig / 640.0
+        scale_y = h_orig / 640.0
+        
+        for class_id, class_detections in enumerate(output_list):
+            if not isinstance(class_detections, np.ndarray) or class_detections.size == 0:
+                continue
+            
+            # Each detection: [y_min, x_min, y_max, x_max, confidence]
+            for detection in class_detections:
+                if len(detection) < 5:
+                    continue
+                
+                y_min, x_min, y_max, x_max, conf = detection[:5]
+                
+                # Filter by confidence
+                if conf < self.conf:
+                    continue
+                
+                # Convert from normalized [0-1] to pixels
+                # Hailo outputs are usually normalized
+                x1 = float(x_min * 640 * scale_x)
+                y1 = float(y_min * 640 * scale_y)
+                x2 = float(x_max * 640 * scale_x)
+                y2 = float(y_max * 640 * scale_y)
+                
+                # Convert to xywh format
+                x = x1
+                y = y1
+                w = x2 - x1
+                h = y2 - y1
+                
+                class_name = self.names.get(class_id, f"class_{class_id}")
+                
+                detections.append({
+                    'bbox': [x, y, w, h],
+                    'confidence': float(conf),
+                    'class_id': int(class_id),
+                    'class_name': class_name
+                })
         
         return detections
     
