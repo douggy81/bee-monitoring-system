@@ -622,17 +622,33 @@ def ai_detect():
         if iou is not None:
             backend.iou = float(iou)
 
-        # Capture one frame from the camera
-        from hardware_integration import CameraManager
-        cam = CameraManager()
-        if not cam.initialize():
-            return jsonify({'success': False, 'error': 'Camera initialization failed'}), 500
-        try:
-            frame = cam.capture_frame()
-            if frame is None:
-                return jsonify({'success': False, 'error': 'Failed to capture frame'}), 500
-        finally:
-            cam.cleanup()
+        # Capture one frame from camera or URL stream
+        stream_url = request.args.get('stream_url')
+        
+        if stream_url:
+            # Use URL stream instead of local camera
+            import cv2
+            cap = cv2.VideoCapture(stream_url)
+            if not cap.isOpened():
+                return jsonify({'success': False, 'error': f'Failed to open stream: {stream_url}'}), 500
+            try:
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    return jsonify({'success': False, 'error': 'Failed to read frame from stream'}), 500
+            finally:
+                cap.release()
+        else:
+            # Use local camera
+            from hardware_integration import CameraManager
+            cam = CameraManager()
+            if not cam.initialize():
+                return jsonify({'success': False, 'error': 'Camera initialization failed'}), 500
+            try:
+                frame = cam.capture_frame()
+                if frame is None:
+                    return jsonify({'success': False, 'error': 'Failed to capture frame'}), 500
+            finally:
+                cam.cleanup()
 
         # Run inference
         detections = backend.infer_full(frame)
