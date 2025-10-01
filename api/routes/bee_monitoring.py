@@ -628,6 +628,11 @@ def ai_detect():
         if stream_url:
             # Use URL stream instead of local camera
             import cv2
+            
+            # Handle file:// URLs - OpenCV needs raw path
+            if stream_url.startswith('file://'):
+                stream_url = stream_url[7:]  # Remove 'file://' prefix
+            
             cap = cv2.VideoCapture(stream_url)
             if not cap.isOpened():
                 return jsonify({'success': False, 'error': f'Failed to open stream: {stream_url}'}), 500
