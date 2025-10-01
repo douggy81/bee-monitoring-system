@@ -201,6 +201,29 @@ def _get_hailo_backend():
         logger.warning(f"HailoBackend import/init failed: {e}")
         return None
 
+# Degirum backend (lazy) - Preferred for Hailo AI HAT+ integration
+_degirum_backend = None  # type: ignore
+
+def _get_degirum_backend():
+    """Load and cache the Degirum backend lazily. Returns None if unavailable."""
+    global _degirum_backend
+    if _degirum_backend is not None:
+        return _degirum_backend
+    try:
+        from ai.degirum_backend import DegirumBackend  # type: ignore
+        # Get model name and device from env, or use defaults
+        model_name = os.environ.get('DEGIRUM_MODEL', 'yolo11n_bee_monitoring')
+        device = os.environ.get('DEGIRUM_DEVICE', 'AUTO')  # AUTO, HAILO, CPU
+        db = DegirumBackend(model_name=model_name, device=device)
+        if db.initialize():
+            _degirum_backend = db
+            logger.info(f"Degirum backend initialized with model: {model_name}")
+            return _degirum_backend
+        return None
+    except Exception as e:
+        logger.warning(f"DegirumBackend import/init failed: {e}")
+        return None
+
 @bee_bp.route('/health', methods=['GET'])
 def health_check():
     """API health check endpoint"""
@@ -400,12 +423,14 @@ def camera_stream():
                 frame_index = 0
                 if ai_on:
                     # Select backend according to ai_backend_sel
-                    if ai_backend_sel == 'hailo':
+                    if ai_backend_sel == 'degirum':
+                        backend = _get_degirum_backend()
+                    elif ai_backend_sel == 'hailo':
                         backend = _get_hailo_backend()
                     elif ai_backend_sel == 'cpu':
                         backend = _get_cpu_backend()
-                    else:  # auto prefers CPU until Hailo real inference is ready
-                        backend = _get_cpu_backend() or _get_hailo_backend()
+                    else:  # auto prefers Degirum (Hailo via PySDK) > CPU > Hailo (raw)
+                        backend = _get_degirum_backend() or _get_cpu_backend() or _get_hailo_backend()
                     if backend is None:
                         logger.warning("AI overlay requested but backend unavailable; continuing without overlay")
                         ai_on = False
@@ -573,12 +598,14 @@ def ai_detect():
         # Load backend (and optionally tweak thresholds)
         ai_backend_sel = (request.args.get('ai_backend', 'auto') or 'auto').lower()
         backend = None
-        if ai_backend_sel == 'hailo':
+        if ai_backend_sel == 'degirum':
+            backend = _get_degirum_backend()
+        elif ai_backend_sel == 'hailo':
             backend = _get_hailo_backend()
         elif ai_backend_sel == 'cpu':
             backend = _get_cpu_backend()
         else:
-            backend = _get_cpu_backend() or _get_hailo_backend()
+            backend = _get_degirum_backend() or _get_cpu_backend() or _get_hailo_backend()
         if backend is None:
             return jsonify({
                 'success': False,
@@ -659,7 +686,14 @@ def ai_status():
       }
     """
     try:
-        backend = _get_cpu_backend()
+        # Check all backends
+        degirum_backend = _get_degirum_backend()
+        cpu_backend = _get_cpu_backend()
+        hailo_backend = _get_hailo_backend()
+        
+        # Use first available backend for primary status
+        backend = degirum_backend or cpu_backend or hailo_backend
+        
         if backend is None:
             return jsonify({
                 'ready': False,
@@ -679,7 +713,21 @@ def ai_status():
             'iou': float(getattr(backend, 'iou', 0.0)),
             'imgsz': int(getattr(backend, 'imgsz', 0) or 0),
             'timestamp': datetime.now().isoformat(),
+            # Backend availability
+            'backends': {
+                'degirum': degirum_backend is not None,
+                'cpu': cpu_backend is not None,
+                'hailo': hailo_backend is not None
+            }
         }
+        
+        # Add Degirum-specific info if available
+        if degirum_backend:
+            try:
+                dg_info = degirum_backend.get_version_info()
+                resp['degirum'] = dg_info
+            except Exception:
+                pass
         if resp['runtime'] == 'onnx':
             try:
                 import onnxruntime as ort  # type: ignore

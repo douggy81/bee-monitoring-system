@@ -22,6 +22,9 @@ Pillow==10.0.1
 ultralytics==8.2.103
 onnxruntime==1.22.1
 
+# AI Acceleration - Degirum PySDK for Hailo AI HAT+
+degirum-tools>=0.18.0
+
 # Raspberry Pi and Hardware
 # NOTE: On Raspberry Pi, install GPIO and Picamera2 via apt:
 #   sudo apt install -y python3-rpi.gpio python3-picamera2

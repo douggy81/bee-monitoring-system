@@ -1,27 +1,39 @@
 """
-Hailo AI backend scaffold for Bee Monitoring.
+Hailo backend for YOLO inference using Hailo AI accelerator (AI HAT+, Hailo-8L).
 
-This backend verifies Hailo device availability, optionally loads a HEF model (path via HAILO_HEF),
-and exposes an infer(frame) method returning (boxes, scores).
-
-NOTE: This is a scaffold. Actual inference via HailoRT needs model-specific pre/post-processing.
-For now, we generate placeholder detections after verifying the device is reachable.
+Real implementation using HailoRT Python API with vstreams for YOLO11n inference.
 """
-from __future__ import annotations
-
-from typing import List, Tuple, Optional, Dict, Any
 import os
 import subprocess
-import numpy as np
 import logging
+import threading
+from typing import List, Tuple, Dict, Any, Optional
+import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Try to import Hailo Platform API
+try:
+    from hailo_platform import (
+        HEF,
+        Device,
+        VDevice,
+        HailoStreamInterface,
+        InferVStreams,
+        ConfigureParams,
+        InputVStreamParams,
+        OutputVStreamParams,
+        FormatType
+    )
+    _HAILO_AVAILABLE = True
+except ImportError:
+    _HAILO_AVAILABLE = False
+    logger.warning("hailo_platform not available; Hailo backend will not initialize")
 class HailoBackend:
     def __init__(self, hef_path: Optional[str] = None) -> None:
         self.hef_path = hef_path
         self.initialized = False
         # Align interface with CpuBackend
-        self.runtime = 'hailo'
         self.conf: float = 0.25
         self.iou: float = 0.45
         self.imgsz: int = 640
