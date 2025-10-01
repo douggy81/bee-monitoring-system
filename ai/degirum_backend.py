@@ -69,6 +69,10 @@ class DegirumBackend:
             logger.warning("DEGIRUM_TOKEN not set; cannot connect to Degirum cloud")
             return False
         
+        # Set HOME to writable location to avoid DeGirum creating dirs in read-only /opt
+        os.environ['HOME'] = '/tmp/degirum_home'
+        os.makedirs('/tmp/degirum_home', exist_ok=True)
+        
         try:
             # Try to connect to local Hailo device first
             if self.device_preference in ("AUTO", "HAILO"):

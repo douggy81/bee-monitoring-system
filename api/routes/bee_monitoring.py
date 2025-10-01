@@ -201,28 +201,31 @@ def _get_hailo_backend():
         logger.warning(f"HailoBackend import/init failed: {e}")
         return None
 
-# Degirum backend (lazy) - Preferred for Hailo AI HAT+ integration
+# Degirum backend (lazy) - TEMPORARILY DISABLED due to filesystem permission issues
 _degirum_backend = None  # type: ignore
 
 def _get_degirum_backend():
     """Load and cache the Degirum backend lazily. Returns None if unavailable."""
-    global _degirum_backend
-    if _degirum_backend is not None:
-        return _degirum_backend
-    try:
-        from ai.degirum_backend import DegirumBackend  # type: ignore
-        # Get model name and device from env, or use defaults
-        model_name = os.environ.get('DEGIRUM_MODEL', 'yolo11n_bee_monitoring')
-        device = os.environ.get('DEGIRUM_DEVICE', 'AUTO')  # AUTO, HAILO, CPU
-        db = DegirumBackend(model_name=model_name, device=device)
-        if db.initialize():
-            _degirum_backend = db
-            logger.info(f"Degirum backend initialized with model: {model_name}")
-            return _degirum_backend
-        return None
-    except Exception as e:
-        logger.warning(f"DegirumBackend import/init failed: {e}")
-        return None
+    # TEMPORARILY DISABLED: Degirum library creates dirs on import, causing crashes
+    logger.debug("Degirum backend temporarily disabled")
+    return None
+    
+    # global _degirum_backend
+    # if _degirum_backend is not None:
+    #     return _degirum_backend
+    # try:
+    #     from ai.degirum_backend import DegirumBackend  # type: ignore
+    #     model_name = os.environ.get('DEGIRUM_MODEL', 'yolo11n_bee_monitoring')
+    #     device = os.environ.get('DEGIRUM_DEVICE', 'AUTO')
+    #     db = DegirumBackend(model_name=model_name, device=device)
+    #     if db.initialize():
+    #         _degirum_backend = db
+    #         logger.info(f"Degirum backend initialized with model: {model_name}")
+    #         return _degirum_backend
+    #     return None
+    # except Exception as e:
+    #     logger.warning(f"DegirumBackend import/init failed: {e}")
+    #     return None
 
 @bee_bp.route('/health', methods=['GET'])
 def health_check():
@@ -429,8 +432,8 @@ def camera_stream():
                         backend = _get_hailo_backend()
                     elif ai_backend_sel == 'cpu':
                         backend = _get_cpu_backend()
-                    else:  # auto prefers Degirum (Hailo via PySDK) > CPU > Hailo (raw)
-                        backend = _get_degirum_backend() or _get_cpu_backend() or _get_hailo_backend()
+                    else:  # auto prefers Hailo (raw HEF) > Degirum (cloud) > CPU
+                        backend = _get_hailo_backend() or _get_degirum_backend() or _get_cpu_backend()
                     if backend is None:
                         logger.warning("AI overlay requested but backend unavailable; continuing without overlay")
                         ai_on = False
@@ -605,7 +608,7 @@ def ai_detect():
         elif ai_backend_sel == 'cpu':
             backend = _get_cpu_backend()
         else:
-            backend = _get_degirum_backend() or _get_cpu_backend() or _get_hailo_backend()
+            backend = _get_hailo_backend() or _get_degirum_backend() or _get_cpu_backend()
         if backend is None:
             return jsonify({
                 'success': False,

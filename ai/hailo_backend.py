@@ -1,14 +1,16 @@
 """
 Hailo backend for YOLO inference using Hailo AI accelerator (AI HAT+, Hailo-8L).
 
-Real implementation using HailoRT Python API with vstreams for YOLO11n inference.
+Real implementation using HailoRT Python API for YOLO11n inference.
 """
 import os
 import subprocess
 import logging
 import threading
+import json
 from typing import List, Tuple, Dict, Any, Optional
 import numpy as np
+import cv2
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +33,45 @@ except ImportError:
     logger.warning("hailo_platform not available; Hailo backend will not initialize")
 class HailoBackend:
     def __init__(self, hef_path: Optional[str] = None) -> None:
-        self.hef_path = hef_path
+        self.hef_path = hef_path or self._resolve_default_hef_path()
         self.initialized = False
         # Align interface with CpuBackend
         self.conf: float = 0.25
         self.iou: float = 0.45
         self.imgsz: int = 640
+        self.runtime = "hailo"
+        
+        # Hailo inference objects
+        self.hef = None
+        self.network_group = None
+        self.network_group_params = None
+        self.input_vstreams_params = None
+        self.output_vstreams_params = None
+        self.vdevice = None
+        
+        # Class names (loaded from labels JSON)
+        self.names: Dict[int, str] = {}
+        
+        # Thread safety
+        self._infer_lock = threading.Lock()
+    
+    def _resolve_default_hef_path(self) -> Optional[str]:
+        """Find default HEF file."""
+        here = os.path.dirname(os.path.abspath(__file__))
+        root = os.path.abspath(os.path.join(here, os.pardir))
+        models_dir = os.path.join(root, "api", "models")
+        
+        # Look for YOLO11n HEF first
+        hef_candidates = [
+            os.path.join(models_dir, "yolo11n_coco--640x640_quant_hailort_multidevice_1.hef"),
+            os.path.join(models_dir, "yolo11n.hef"),
+            os.path.join(models_dir, "yolov8n.hef"),
+        ]
+        
+        for hef in hef_candidates:
+            if os.path.isfile(hef):
+                return hef
+        return None
 
     def _run_cli(self, args: List[str]) -> Tuple[int, str, str]:
         env = dict(os.environ)
@@ -58,34 +93,102 @@ class HailoBackend:
         return proc.returncode, out, err
 
     def initialize(self) -> bool:
-        # Verify hailortcli present (absolute path to avoid PATH issues under systemd)
-        hailortcli_path = "/usr/bin/hailortcli"
-        if not os.path.exists(hailortcli_path):
-            logger.warning("hailortcli not found at %s", hailortcli_path)
+        """Initialize Hailo device and load HEF model."""
+        if not _HAILO_AVAILABLE:
+            logger.warning("Hailo Platform API not available")
             return False
-
-        # Identify device to confirm basic connectivity
-        rc, out, err = self._run_cli([hailortcli_path, "fw-control", "identify"])
-        if rc != 0:
-            logger.warning("hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
-            # Try with sudo as fallback
-            sudo_path = "/usr/bin/sudo"
-            if os.path.exists(sudo_path):
-                rc, out, err = self._run_cli([sudo_path, "env", "HAILORT_LOG_DIR=/tmp", hailortcli_path, "fw-control", "identify"])
-                if rc != 0:
-                    logger.warning("sudo hailortcli identify failed (rc=%s). stdout=%r stderr=%r", rc, out.strip(), err.strip())
-            if rc != 0:
+        
+        if not self.hef_path or not os.path.isfile(self.hef_path):
+            logger.warning(f"HEF file not found: {self.hef_path}")
+            return False
+        
+        # Set up environment for HailoRT
+        os.environ.setdefault("HAILORT_LOG_DIR", "/tmp")
+        home_dir = "/tmp/hailo_home"
+        os.environ["HOME"] = home_dir
+        os.makedirs(home_dir, exist_ok=True)
+        # Ensure PATH has system bins for hostname etc
+        os.environ["PATH"] = f"/usr/bin:/bin:{os.environ.get('PATH', '')}"
+        
+        try:
+            logger.info(f"Loading HEF: {self.hef_path}")
+            
+            # Load HEF
+            self.hef = HEF(self.hef_path)
+            
+            # Create VDevice
+            self.vdevice = VDevice()
+            
+            # Configure network group
+            network_groups = self.vdevice.configure(self.hef)
+            if not network_groups:
+                logger.error("No network groups found in HEF")
                 return False
-
-        # If a HEF path is given, ensure it exists (loading is model-specific; we'll just validate path for now)
-        if self.hef_path:
-            if not os.path.isfile(self.hef_path):
-                # HEF path invalid; refuse initialization to avoid confusion
-                return False
-            # Actual loading via HailoRT Python API would occur here.
-
-        self.initialized = True
-        return True
+            
+            self.network_group = network_groups[0]
+            
+            # Get input/output vstream params
+            # API varies by HailoRT version - try different approaches
+            try:
+                # Method 1: via network_group_params
+                self.network_group_params = self.network_group.create_params()
+                self.input_vstreams_params = self.network_group_params.make_input_vstream_params()
+                self.output_vstreams_params = self.network_group_params.make_output_vstream_params()
+            except (AttributeError, TypeError):
+                # Method 2: direct from network_group
+                try:
+                    self.input_vstreams_params = InputVStreamParams.make(self.network_group)
+                    self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
+                except:
+                    # Method 3: make_from_network_group
+                    self.input_vstreams_params = InputVStreamParams.make_from_network_group(self.network_group)
+                    self.output_vstreams_params = OutputVStreamParams.make_from_network_group(self.network_group)
+            
+            logger.info(f"✓ HEF loaded successfully")
+            logger.info(f"  Network: {self.network_group.name}")
+            logger.info(f"  Inputs: {len(self.input_vstreams_params)}")
+            logger.info(f"  Outputs: {len(self.output_vstreams_params)}")
+            
+            # Load class names from labels JSON
+            self._load_class_names()
+            
+            self.initialized = True
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Hailo backend: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def _load_class_names(self):
+        """Load COCO class names from labels JSON."""
+        if not self.hef_path:
+            return
+        
+        # Look for labels file alongside HEF
+        hef_dir = os.path.dirname(self.hef_path)
+        labels_candidates = [
+            os.path.join(hef_dir, "labels_yolo11n_coco.json"),
+            os.path.join(hef_dir, "coco_labels.json"),
+        ]
+        
+        for labels_path in labels_candidates:
+            if os.path.isfile(labels_path):
+                try:
+                    with open(labels_path, 'r') as f:
+                        labels_dict = json.load(f)
+                        # Convert string keys to int
+                        self.names = {int(k): v for k, v in labels_dict.items()}
+                        logger.info(f"✓ Loaded {len(self.names)} class names from {os.path.basename(labels_path)}")
+                        return
+                except Exception as e:
+                    logger.warning(f"Failed to load labels from {labels_path}: {e}")
+        
+        # Fallback to COCO defaults if no labels file
+        if not self.names:
+            logger.warning("No labels file found, using default COCO class names")
+            self.names = {i: f"class_{i}" for i in range(80)}
 
     def infer(self, frame) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
         """Placeholder inference: generate pseudo detections while backend is being integrated."""
@@ -133,20 +236,162 @@ class HailoBackend:
         return info
 
     def infer_full(self, frame) -> List[Dict[str, Any]]:
-        """Return detection dicts like CPU backend: [{bbox, confidence, class_id, class_name}].
-        
-        SAFETY: Placeholder detections disabled until real HailoRT Python vstreams are implemented.
-        Random detections cause visual instability and should not be used in production.
         """
-        if not self.initialized:
+        Run inference on frame and return detections.
+        
+        Args:
+            frame: numpy array (H, W, 3) BGR format
+            
+        Returns:
+            List of detection dicts: [{bbox, confidence, class_id, class_name}]
+        """
+        if not self.initialized or self.network_group is None:
             return []
         
-        # DISABLED: Placeholder random detections (causes stream instability)
-        # TODO: Implement real HailoRT Python API inference with:
-        #   - HEF loading via hailo.hailort.HEF()
-        #   - Network group configuration
-        #   - Input/output vstreams setup
-        #   - Preprocessing: letterbox, normalize, BGR->RGB, NHWC->NCHW
-        #   - Postprocessing: parse YOLO output, NMS, class mapping
-        logger.debug("Hailo backend is scaffold-only; returning empty detections until HailoRT is implemented")
-        return []
+        with self._infer_lock:
+            try:
+                # Preprocess frame
+                input_data = self._preprocess(frame)
+                
+                # Run inference with vstreams
+                with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
+                    # Send input
+                    infer_pipeline.send(input_data)
+                    
+                    # Receive output
+                    output_data = infer_pipeline.recv()
+                
+                # Postprocess output to get detections
+                detections = self._postprocess(output_data, frame.shape)
+                
+                return detections
+                
+            except Exception as e:
+                logger.warning(f"Hailo inference failed: {e}")
+                return []
+    
+    def _preprocess(self, frame) -> Dict[str, np.ndarray]:
+        """
+        Preprocess frame for Hailo inference.
+        
+        Returns dict with input name as key and preprocessed data as value.
+        """
+        # Resize to 640x640 (letterbox)
+        input_image, scale, pad = self._letterbox(frame, (640, 640))
+        
+        # Convert BGR to RGB
+        input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
+        
+        # HWC to CHW not needed for Hailo (it handles NHWC)
+        # But we need to add batch dimension and ensure correct dtype
+        input_data = np.expand_dims(input_image, axis=0).astype(np.uint8)
+        
+        # Return dict with input name (get from first input vstream param)
+        input_name = self.input_vstreams_params[0].name
+        return {input_name: input_data}
+    
+    def _letterbox(self, image, new_shape=(640, 640)):
+        """
+        Resize image with letterboxing (keep aspect ratio, add padding).
+        
+        Returns: resized_image, scale, (pad_w, pad_h)
+        """
+        shape = image.shape[:2]  # current shape [height, width]
+        
+        # Scale ratio (new / old)
+        r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+        
+        # Compute padding
+        new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+        dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+        
+        dw /= 2  # divide padding into 2 sides
+        dh /= 2
+        
+        if shape[::-1] != new_unpad:  # resize
+            image = cv2.resize(image, new_unpad, interpolation=cv2.INTER_LINEAR)
+        
+        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+        image = cv2.copyMakeBorder(image, top, bottom, left, right, cv2.BORDER_CONSTANT, value=(114, 114, 114))
+        
+        return image, r, (dw, dh)
+    
+    def _postprocess(self, output_data: Dict[str, np.ndarray], original_shape: Tuple[int, int, int]) -> List[Dict[str, Any]]:
+        """
+        Postprocess Hailo output to get detections.
+        
+        YOLO output format from Hailo: varies by post-processing
+        - Some HEFs have built-in NMS (outputs boxes directly)
+        - Others output raw [batch, 84, 8400] that needs NMS
+        
+        We'll try to handle both formats.
+        """
+        detections = []
+        
+        try:
+            # Get output tensors (multiple outputs for YOLO)
+            # Typical YOLO has 3 outputs at different scales
+            output_names = list(output_data.keys())
+            
+            # Check if post-processed (has bboxes directly) or raw
+            if len(output_names) == 1:
+                # Likely post-processed output
+                output = output_data[output_names[0]]
+                # Format: [num_detections, 6] where each row is [x1, y1, x2, y2, conf, class_id]
+                if output.ndim == 2 and output.shape[1] >= 6:
+                    detections = self._parse_postprocessed_output(output, original_shape)
+            else:
+                # Raw YOLO output - needs NMS
+                # For now, log and return empty
+                logger.warning(f"Raw YOLO output detected ({len(output_names)} tensors) - NMS implementation needed")
+            
+        except Exception as e:
+            logger.error(f"Postprocessing failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return detections
+    
+    def _parse_postprocessed_output(self, output: np.ndarray, original_shape: Tuple[int, int, int]) -> List[Dict[str, Any]]:
+        """Parse post-processed Hailo output (after built-in NMS)."""
+        detections = []
+        h_orig, w_orig = original_shape[:2]
+        
+        # Scale factors (assuming letterboxed to 640x640)
+        scale_x = w_orig / 640.0
+        scale_y = h_orig / 640.0
+        
+        for detection in output:
+            if len(detection) < 6:
+                continue
+            
+            x1, y1, x2, y2, conf, class_id = detection[:6]
+            
+            # Filter by confidence
+            if conf < self.conf:
+                continue
+            
+            # Scale back to original size
+            x1 = float(x1 * scale_x)
+            y1 = float(y1 * scale_y)
+            x2 = float(x2 * scale_x)
+            y2 = float(y2 * scale_y)
+            
+            # Convert to xywh format
+            x = x1
+            y = y1
+            w = x2 - x1
+            h = y2 - y1
+            
+            class_id = int(class_id)
+            class_name = self.names.get(class_id, f"class_{class_id}")
+            
+            detections.append({
+                'bbox': [x, y, w, h],
+                'confidence': float(conf),
+                'class_id': class_id,
+                'class_name': class_name
+            })
+        
+        return detections
