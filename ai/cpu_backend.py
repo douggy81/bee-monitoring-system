@@ -69,13 +69,16 @@ class CpuBackend:
         # Prefer ONNX to avoid requiring PyTorch on target device
         here = os.path.dirname(os.path.abspath(__file__))
         root = os.path.abspath(os.path.join(here, os.pardir))
-        # Prefer YOLO11n (latest), fallback to YOLOv8n
+        # Prioritize custom bee model, then generic YOLO11n, fallback to YOLOv8n
+        yolo11_bee_onnx = os.path.join(root, "api", "models", "yolo11n_bee.onnx")
         yolo11_onnx = os.path.join(root, "api", "models", "yolo11n.onnx")
         yolo11_pt = os.path.join(root, "api", "models", "yolo11n.pt")
         yolo8_onnx = os.path.join(root, "api", "models", "yolov8n.onnx")
         yolo8_pt = os.path.join(root, "api", "models", "yolov8n.pt")
         
-        if os.path.isfile(yolo11_onnx):
+        if os.path.isfile(yolo11_bee_onnx):
+            return yolo11_bee_onnx
+        elif os.path.isfile(yolo11_onnx):
             return yolo11_onnx
         elif os.path.isfile(yolo11_pt):
             return yolo11_pt
