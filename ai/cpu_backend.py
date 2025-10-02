@@ -351,7 +351,11 @@ class CpuBackend:
         # Normalize shape to (N, 4+num_classes)
         if pred.ndim == 3:
             pred = np.squeeze(pred, 0)
-        if pred.shape[0] in (84, 5 + 80):
+        # Detect if we need to transpose based on shape
+        # YOLO output is typically [features, anchors] but we need [anchors, features]
+        # Features = 4 (bbox) + num_classes
+        if pred.shape[0] < pred.shape[1]:
+            # First dim is small (features), second is large (anchors) -> transpose
             pred = pred.T
         # Split
         boxes_xywh = pred[:, :4]
