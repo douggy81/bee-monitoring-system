@@ -187,3 +187,5 @@ config/local_*.json
 .env.local
 .env.production
 .env.development
+*.mp4
+*.mov

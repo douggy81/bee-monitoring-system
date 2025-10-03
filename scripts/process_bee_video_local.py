@@ -99,10 +99,15 @@ def process_video(
     
     # Initialize backend
     print("Initializing backend...")
-    backend = Backend(conf_threshold=conf)
+    backend = Backend()
     if not backend.initialize():
         raise RuntimeError("Failed to initialize backend")
+    
+    # Set confidence threshold
+    backend.conf = conf
+    
     print(f"✓ Backend initialized (model: {backend.model_path if hasattr(backend, 'model_path') else backend.hef_path})")
+    print(f"  Confidence threshold: {backend.conf}")
     print()
     
     # Open input video
