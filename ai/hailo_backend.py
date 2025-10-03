@@ -61,8 +61,10 @@ class HailoBackend:
         root = os.path.abspath(os.path.join(here, os.pardir))
         models_dir = os.path.join(root, "api", "models")
         
-        # Look for YOLO11n HEF first
+        # Look for YOLO11n HEF first - prioritize custom bee model v2
         hef_candidates = [
+            os.path.join(models_dir, "yolo11n_bee_v2--800x800_quant_hailort_multidevice_2.hef"),
+            os.path.join(models_dir, "yolo11n_bee_best--640x640_quant_hailort_multidevice_1.hef"),
             os.path.join(models_dir, "yolo11n_coco--640x640_quant_hailort_multidevice_1.hef"),
             os.path.join(models_dir, "yolo11n.hef"),
             os.path.join(models_dir, "yolov8n.hef"),
@@ -149,6 +151,32 @@ class HailoBackend:
             logger.info(f"  Inputs: {len(self.input_vstreams_params)}")
             logger.info(f"  Outputs: {len(self.output_vstreams_params)}")
             
+            # Extract input dimensions from HEF metadata
+            # Parse from the filename or HEF metadata
+            hef_filename = os.path.basename(self.hef_path)
+            if '800x800' in hef_filename:
+                self.imgsz = 800
+                logger.info(f"  Input size detected from filename: {self.imgsz}×{self.imgsz}")
+            elif '640x640' in hef_filename:
+                self.imgsz = 640
+                logger.info(f"  Input size detected from filename: {self.imgsz}×{self.imgsz}")
+            else:
+                # Try to get from buffer format
+                try:
+                    if self.input_vstreams_params:
+                        if isinstance(self.input_vstreams_params, dict):
+                            input_param = list(self.input_vstreams_params.values())[0]
+                        else:
+                            input_param = self.input_vstreams_params[0]
+                        
+                        if hasattr(input_param, 'user_buffer_format'):
+                            buffer_format = input_param.user_buffer_format
+                            if hasattr(buffer_format, 'height') and hasattr(buffer_format, 'width'):
+                                self.imgsz = buffer_format.height
+                                logger.info(f"  Input size detected from buffer: {self.imgsz}×{buffer_format.width}")
+                except Exception as e:
+                    logger.warning(f"  Could not detect input size: {e}. Using default 640")
+            
             # Load class names from labels JSON
             self._load_class_names()
             
@@ -169,6 +197,9 @@ class HailoBackend:
         # Look for labels file alongside HEF
         hef_dir = os.path.dirname(self.hef_path)
         labels_candidates = [
+            os.path.join(hef_dir, "labels_yolo11n_bee_v2.json"),
+            os.path.join(hef_dir, "labels_yolo11n_bee_best.json"),
+            os.path.join(hef_dir, "labels_bee.json"),
             os.path.join(hef_dir, "labels_yolo11n_coco.json"),
             os.path.join(hef_dir, "coco_labels.json"),
         ]
@@ -285,8 +316,9 @@ class HailoBackend:
         
         Returns dict with input name as key and preprocessed data as value.
         """
-        # Resize to 640x640 (letterbox)
-        input_image, scale, pad = self._letterbox(frame, (640, 640))
+        # Resize to model input size (letterbox)
+        target_size = (self.imgsz, self.imgsz)
+        input_image, scale, pad = self._letterbox(frame, target_size)
         
         # Convert BGR to RGB
         input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
@@ -303,12 +335,15 @@ class HailoBackend:
             input_name = self.input_vstreams_params[0].name
         return {input_name: input_data}
     
-    def _letterbox(self, image, new_shape=(640, 640)):
+    def _letterbox(self, image, new_shape=None):
         """
         Resize image with letterboxing (keep aspect ratio, add padding).
         
         Returns: resized_image, scale, (pad_w, pad_h)
         """
+        if new_shape is None:
+            new_shape = (self.imgsz, self.imgsz)
+        
         shape = image.shape[:2]  # current shape [height, width]
         
         # Scale ratio (new / old)
@@ -401,9 +436,9 @@ class HailoBackend:
         detections = []
         h_orig, w_orig = original_shape[:2]
         
-        # Scale factors (assuming letterboxed to 640x640)
-        scale_x = w_orig / 640.0
-        scale_y = h_orig / 640.0
+        # Scale factors (using model input size)
+        scale_x = w_orig / float(self.imgsz)
+        scale_y = h_orig / float(self.imgsz)
         
         for class_id, class_detections in enumerate(output_list):
             if not isinstance(class_detections, np.ndarray) or class_detections.size == 0:
@@ -422,10 +457,10 @@ class HailoBackend:
                 
                 # Convert from normalized [0-1] to pixels
                 # Hailo outputs are usually normalized
-                x1 = float(x_min * 640 * scale_x)
-                y1 = float(y_min * 640 * scale_y)
-                x2 = float(x_max * 640 * scale_x)
-                y2 = float(y_max * 640 * scale_y)
+                x1 = float(x_min * self.imgsz * scale_x)
+                y1 = float(y_min * self.imgsz * scale_y)
+                x2 = float(x_max * self.imgsz * scale_x)
+                y2 = float(y_max * self.imgsz * scale_y)
                 
                 # Convert to xywh format
                 x = x1
@@ -449,9 +484,9 @@ class HailoBackend:
         detections = []
         h_orig, w_orig = original_shape[:2]
         
-        # Scale factors (assuming letterboxed to 640x640)
-        scale_x = w_orig / 640.0
-        scale_y = h_orig / 640.0
+        # Scale factors (using model input size)
+        scale_x = w_orig / float(self.imgsz)
+        scale_y = h_orig / float(self.imgsz)
         
         for detection in output:
             if len(detection) < 6:
