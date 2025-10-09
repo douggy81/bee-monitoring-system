@@ -222,21 +222,21 @@ class HailoBackend:
             self.names = {i: f"class_{i}" for i in range(80)}
 
     def infer(self, frame) -> Tuple[List[Tuple[int, int, int, int]], List[float]]:
-        """Placeholder inference: generate pseudo detections while backend is being integrated."""
+        """Run real Hailo inference and return (boxes_xywh, confidences)."""
         if not self.initialized:
             return [], []
-
-        h, w = frame.shape[0], frame.shape[1]
-        count = int(np.random.randint(5, 20))
+        
+        # Call infer_full and convert to simple format
+        detections = self.infer_full(frame)
+        
         boxes: List[Tuple[int, int, int, int]] = []
         scores: List[float] = []
-        for _ in range(count):
-            bw = int(np.random.randint(18, 44))
-            bh = int(np.random.randint(18, 44))
-            x = int(np.random.randint(0, max(1, w - bw)))
-            y = int(np.random.randint(0, max(1, h - bh)))
-            boxes.append((x, y, bw, bh))
-            scores.append(float(np.random.uniform(0.65, 0.95)))
+        
+        for det in detections:
+            bbox = det['bbox']  # [x, y, w, h]
+            boxes.append((int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])))
+            scores.append(float(det['confidence']))
+        
         return boxes, scores
 
     def close(self) -> None:
@@ -323,16 +323,28 @@ class HailoBackend:
         # Convert BGR to RGB
         input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
         
-        # HWC to CHW not needed for Hailo (it handles NHWC)
-        # But we need to add batch dimension and ensure correct dtype
-        input_data = np.expand_dims(input_image, axis=0).astype(np.uint8)
+        # Hailo expects HWC format with uint8, no batch dimension for single image
+        # Shape should be (H, W, C) = (800, 800, 3)
+        input_data = input_image.astype(np.uint8)
         
-        # Return dict with input name (get from first input vstream param)
-        # input_vstreams_params is a dict, not a list
+        # Verify shape
+        expected_size = self.imgsz * self.imgsz * 3
+        actual_size = input_data.nbytes
+        if actual_size != expected_size:
+            logger.warning(f"Input size mismatch: expected {expected_size}, got {actual_size}")
+        
+        # Get input name from vstream params
+        # Different HailoRT versions have different structures
         if isinstance(self.input_vstreams_params, dict):
             input_name = list(self.input_vstreams_params.keys())[0]
-        else:
+        elif isinstance(self.input_vstreams_params, list):
             input_name = self.input_vstreams_params[0].name
+        else:
+            # Fallback to common name
+            input_name = "input_layer1"
+        
+        logger.debug(f"Preprocessed input '{input_name}': shape={input_data.shape}, dtype={input_data.dtype}, size={input_data.nbytes}")
+        
         return {input_name: input_data}
     
     def _letterbox(self, image, new_shape=None):
