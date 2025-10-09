@@ -1,0 +1,33 @@
+{
+    "ConfigVersion": 11,
+    "Checksum": "e39dac5517f29e48408fa94b91fb0db855131b119c1a44f2c720f2a2da68f95a",
+    "DEVICE": [
+        {
+            "DeviceType": "HAILO8L",
+            "RuntimeAgent": "HAILORT",
+            "SupportedDeviceTypes": "HAILORT/HAILO8L, HAILORT/HAILO8",
+            "EagerBatchSize": 1
+        }
+    ],
+    "PRE_PROCESS": [
+        {
+            "InputN": 1,
+            "InputH": 640,
+            "InputW": 640,
+            "InputC": 3,
+            "InputQuantEn": true
+        }
+    ],
+    "MODEL_PARAMETERS": [
+        {
+            "ModelPath": "bee_test2--640x640_quant_hailort_multidevice_1.hef"
+        }
+    ],
+    "POST_PROCESS": [
+        {
+            "OutputPostprocessType": "DetectionYoloHailo",
+            "OutputNumClasses": 3,
+            "LabelsPath": "labels_bee_test2.json"
+        }
+    ]
+}

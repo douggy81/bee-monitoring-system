@@ -44,8 +44,9 @@ class HailoBackend:
         root = os.path.abspath(os.path.join(here, os.pardir))
         models_dir = os.path.join(root, "api", "models")
         
-        # Look for YOLO11n HEF first - prioritize custom bee model v2
+        # Look for YOLO11n HEF first - prioritize newest freshly compiled model
         hef_candidates = [
+            os.path.join(models_dir, "bee_test2--640x640_quant_hailort_multidevice_1/bee_test2--640x640_quant_hailort_multidevice_1.hef"),
             os.path.join(models_dir, "yolo11n_bee_v2--800x800_quant_hailort_multidevice_2.hef"),
             os.path.join(models_dir, "yolo11n_bee_best--640x640_quant_hailort_multidevice_1.hef"),
             os.path.join(models_dir, "yolo11n_coco--640x640_quant_hailort_multidevice_1.hef"),
@@ -108,6 +109,7 @@ class HailoBackend:
         
         hef_dir = os.path.dirname(self.hef_path)
         labels_candidates = [
+            os.path.join(hef_dir, "labels_bee_test2.json"),
             os.path.join(hef_dir, "labels_yolo11n_bee_v2.json"),
             os.path.join(hef_dir, "labels_bee_v2.json"),
             os.path.join(hef_dir, "labels_bee.json"),
@@ -162,8 +164,16 @@ class HailoBackend:
             import cv2
             frame_resized = cv2.resize(frame, (self.imgsz, self.imgsz))
             
+            # Convert BGR to RGB (OpenCV uses BGR, Hailo expects RGB)
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+            
+            # Ensure correct format
+            frame_rgb = np.ascontiguousarray(frame_rgb, dtype=np.uint8)
+            
+            logger.debug(f"Preprocessed for Hailo: shape={frame_rgb.shape}, dtype={frame_rgb.dtype}, size={frame_rgb.nbytes}")
+            
             # Run inference with Hailo wrapper
-            results = self.hailo.run(frame_resized)
+            results = self.hailo.run(frame_rgb)
             
             # Extract detections from Hailo NMS output
             # Format: list where each element is detections for a class
