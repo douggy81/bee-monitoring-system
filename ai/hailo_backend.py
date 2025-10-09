@@ -282,19 +282,28 @@ class HailoBackend:
         with self._infer_lock:
             try:
                 # Preprocess frame
-                logger.debug(f"Preprocessing frame: {frame.shape}")
+                logger.info(f"Preprocessing frame: {frame.shape}")
                 input_data = self._preprocess(frame)
-                logger.debug(f"Preprocessed input: {list(input_data.keys())}, shape: {list(input_data.values())[0].shape}")
+                
+                # Debug input data structure
+                logger.info(f"Input data keys: {list(input_data.keys())}")
+                for key, value in input_data.items():
+                    logger.info(f"  '{key}': type={type(value)}, shape={value.shape if hasattr(value, 'shape') else 'N/A'}, dtype={value.dtype if hasattr(value, 'dtype') else 'N/A'}, nbytes={value.nbytes if hasattr(value, 'nbytes') else 'N/A'}, c_contiguous={value.flags.c_contiguous if hasattr(value, 'flags') else 'N/A'}")
+                
+                #  Debug vstream params
+                logger.info(f"Input vstream params type: {type(self.input_vstreams_params)}")
+                if isinstance(self.input_vstreams_params, dict):
+                    logger.info(f"  Keys: {list(self.input_vstreams_params.keys())}")
                 
                 # Run inference with vstreams
-                logger.debug(f"Creating InferVStreams...")
+                logger.info(f"Creating InferVStreams and activating network group...")
                 # Activate network group before running inference
                 with self.network_group.activate(self.network_group_params):
                     with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
-                        logger.debug(f"Running inference...")
+                        logger.info(f"Running inference...")
                         # Run inference (blocking call)
                         output_data = infer_pipeline.infer(input_data)
-                        logger.debug(f"Inference complete, output type: {type(output_data)}")
+                        logger.info(f"Inference complete! Output type: {type(output_data)}")
                 
                 # Postprocess output to get detections
                 logger.debug(f"Postprocessing...")
@@ -323,9 +332,14 @@ class HailoBackend:
         # Convert BGR to RGB
         input_image = cv2.cvtColor(input_image, cv2.COLOR_BGR2RGB)
         
-        # Hailo expects HWC format with uint8, no batch dimension for single image
-        # Shape should be (H, W, C) = (800, 800, 3)
-        input_data = input_image.astype(np.uint8)
+        # Hailo expects NHWC format with uint8, WITH batch dimension
+        # Shape should be (1, H, W, C) = (1, 800, 800, 3)
+        # The first dimension is the batch size (1 for single image)
+        input_data = np.expand_dims(input_image, axis=0).astype(np.uint8)
+        
+        # Ensure C-contiguous memory layout (required by Hailo)
+        if not input_data.flags.c_contiguous:
+            input_data = np.ascontiguousarray(input_data)
         
         # Verify shape
         expected_size = self.imgsz * self.imgsz * 3
@@ -393,9 +407,31 @@ class HailoBackend:
             # Get output tensors (multiple outputs for YOLO)
             output_names = list(output_data.keys())
             
-            # Debug output information (only at debug level)
-            logger.debug(f"Hailo output: {len(output_names)} tensors")
-            logger.debug(f"Output names: {output_names}")
+            # ALWAYS log output structure for debugging
+            logger.info(f"=" * 70)
+            logger.info(f"HAILO OUTPUT DEBUG")
+            logger.info(f"=" * 70)
+            logger.info(f"Number of output tensors: {len(output_names)}")
+            logger.info(f"Output names: {output_names}")
+            
+            for name in output_names:
+                output = output_data[name]
+                logger.info(f"\nOutput '{name}':")
+                logger.info(f"  Type: {type(output)}")
+                if isinstance(output, np.ndarray):
+                    logger.info(f"  Shape: {output.shape}")
+                    logger.info(f"  Dtype: {output.dtype}")
+                    logger.info(f"  Size: {output.size}")
+                    logger.info(f"  Min/Max: {output.min():.4f} / {output.max():.4f}")
+                elif isinstance(output, list):
+                    logger.info(f"  List length: {len(output)}")
+                    if len(output) > 0:
+                        logger.info(f"  First element type: {type(output[0])}")
+                        if isinstance(output[0], np.ndarray):
+                            logger.info(f"  First element shape: {output[0].shape}")
+                else:
+                    logger.info(f"  Unexpected type: {type(output)}")
+            logger.info(f"=" * 70)
             
             # Check if post-processed (has bboxes directly) or raw
             if len(output_names) == 1:
