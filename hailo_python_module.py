@@ -24,10 +24,11 @@ except ImportError:
 from ai.hailo_yolo_postprocess import BeeYOLOPostProcessor
 
 # Initialize YOLO post-processor globally
+# Using VERY LOW threshold to see if we get any detections at all
 yolo_processor = BeeYOLOPostProcessor(
     img_dims=(640, 640),
     nms_iou_thresh=0.45,
-    score_threshold=0.25,
+    score_threshold=0.01,  # ← MUCH LOWER (was 0.25) to debug NMS issue
     num_classes=3,
     meta_arch="yolo_v5"
 )
@@ -70,11 +71,19 @@ def run(video_frame):
         # ALSO check raw tensors to see what's happening
         raw_tensors = roi.get_tensors()
         
+        # CRITICAL: Check if there are RAW outputs (pre-NMS)
+        # The issue is we're only seeing post-NMS tensors which are already filtered
+        # Let's look for ALL tensor types
+        print(f"\n🔍 DEBUG Frame {frame_count}: Checking all tensor types...")
+        print(f"   Total tensors available: {len(raw_tensors)}")
+        for i, t in enumerate(raw_tensors):
+            print(f"   Tensor {i}: name='{t.name()}', type={type(t)}")
+        
         # Only print every 30 frames to reduce spam, or when detections found
         if len(detections) > 0 or frame_count % 30 == 1:
             print(f"\nFrame {frame_count}:")
             
-            # Show tensor info
+            # Show tensor info with detailed value analysis
             if len(raw_tensors) > 0:
                 print(f"  Raw tensors: {len(raw_tensors)}")
                 for t in raw_tensors:
@@ -82,9 +91,24 @@ def run(video_frame):
                     tensor_data = roi.get_tensor(tensor_name)
                     tensor_np = np.array(tensor_data, copy=False)
                     print(f"    - {tensor_name}: shape={tensor_np.shape}, dtype={tensor_np.dtype}")
+                    
                     # Show non-zero count
                     non_zero = np.count_nonzero(tensor_np)
                     print(f"      Non-zero elements: {non_zero}/{tensor_np.size}")
+                    
+                    # Analyze values to debug NMS issue
+                    if tensor_np.size > 0:
+                        print(f"      Value range: [{tensor_np.min():.4f}, {tensor_np.max():.4f}]")
+                        print(f"      Mean: {tensor_np.mean():.4f}, Std: {tensor_np.std():.4f}")
+                        
+                        # For uint8, check if values are quantized
+                        if tensor_np.dtype == np.uint8:
+                            unique_vals = np.unique(tensor_np)
+                            print(f"      Unique values: {len(unique_vals)} (sample: {unique_vals[:10]})")
+                        
+                        # Check for potential confidence/detection values
+                        high_values = (tensor_np > 0.5 * tensor_np.max()).sum() if tensor_np.max() > 0 else 0
+                        print(f"      Values > 50% of max: {high_values}")
             
             print(f"  Detections: {len(detections)}")
             
