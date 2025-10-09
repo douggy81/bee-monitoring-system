@@ -152,9 +152,11 @@ class HailoGStreamerBackend:
         Create GStreamer pipeline for processing a single frame.
         
         Uses appsrc to feed frame data into Hailo pipeline.
+        Simplified version without hailofilter - using raw output.
         """
         h, w = frame.shape[:2]
         
+        # Simplified pipeline - HailoNet with built-in NMS
         pipeline_str = (
             f"appsrc name=source emit-signals=true is-live=true format=time "
             f"caps=video/x-raw,format=RGB,width={w},height={h},framerate=1/1 ! "
@@ -162,8 +164,6 @@ class HailoGStreamerBackend:
             f"videoscale ! video/x-raw,width={self.imgsz},height={self.imgsz} ! "
             f"queue ! "
             f"hailonet hef-path={self.hef_path} is-active=true ! "
-            f"queue ! "
-            f"hailofilter so-path=/usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/libyolo_post.so qos=false ! "
             f"queue ! "
             f"appsink name=sink emit-signals=true sync=false"
         )
