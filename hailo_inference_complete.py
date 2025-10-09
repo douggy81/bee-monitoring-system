@@ -151,17 +151,18 @@ def main():
     frame_resized = cv2.resize(frame, (640, 640))
     frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
     
-    # Test with official YOLOv6n model first
-    hef_path = "/usr/local/hailo/resources/models/hailo8l/yolov6n.hef"
-    print(f"📦 Using HEF: {hef_path}")
+    # Use your custom bee model
+    hef_path = "/opt/bee-monitoring/src/api/models/bee_test2--640x640_quant_hailort_multidevice_1/bee_test2--640x640_quant_hailort_multidevice_1.hef"
+    print(f"📦 Using CUSTOM BEE MODEL: {hef_path}")
     
-    # Initialize YOLO post-processor
+    # Initialize YOLO post-processor for YOLO11 bee model
+    # YOLO11 uses same architecture as YOLOv8/v5 (anchor-free)
     yolo_processor = BeeYOLOPostProcessor(
         img_dims=(640, 640),
         nms_iou_thresh=0.45,
-        score_threshold=0.25,
-        num_classes=80,  # COCO has 80 classes
-        meta_arch="yolo_v5"  # YOLOv6 similar to v5
+        score_threshold=0.15,  # Lower threshold for small bees
+        num_classes=3,  # Your bee model: 0=background, 1=bee, 2=pollen
+        meta_arch="yolo_v5"  # YOLO11 uses same format as v8/v5
     )
     print("✅ YOLO post-processor initialized\n")
     
@@ -208,6 +209,12 @@ def main():
                 print(f"✅ Extracted {len(tensors)} tensors:")
                 for name, tensor in tensors.items():
                     print(f"   - {name}: shape={tensor.shape}, dtype={tensor.dtype}")
+                    print(f"     Min={tensor.min()}, Max={tensor.max()}, Mean={tensor.mean():.2f}")
+                    
+                    # For bee model, expected output is typically:
+                    # [batch, num_predictions, 5+num_classes]
+                    # or multiple detection heads
+                    print(f"     Total elements: {tensor.size}")
                 
                 # STEP 2: Post-process with YOLO
                 print("🔧 Applying YOLO post-processing...")
