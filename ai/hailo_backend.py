@@ -47,6 +47,8 @@ class HailoBackend:
         self.network_group_params = None
         self.input_vstreams_params = None
         self.output_vstreams_params = None
+        self.input_vstream_info = None
+        self.output_vstream_info = None
         self.vdevice = None
         
         # Class names (loaded from labels JSON)
@@ -61,10 +63,10 @@ class HailoBackend:
         root = os.path.abspath(os.path.join(here, os.pardir))
         models_dir = os.path.join(root, "api", "models")
         
-        # Look for YOLO11n HEF first - prioritize custom bee model v2
+        # Look for YOLO11n HEF first - prioritize custom bee models
         hef_candidates = [
-            os.path.join(models_dir, "yolo11n_bee_v2--800x800_quant_hailort_multidevice_2.hef"),
             os.path.join(models_dir, "yolo11n_bee_best--640x640_quant_hailort_multidevice_1.hef"),
+            os.path.join(models_dir, "yolo11n_bee_v2--800x800_quant_hailort_multidevice_2.hef"),
             os.path.join(models_dir, "yolo11n_coco--640x640_quant_hailort_multidevice_1.hef"),
             os.path.join(models_dir, "yolo11n.hef"),
             os.path.join(models_dir, "yolov8n.hef"),
@@ -129,22 +131,34 @@ class HailoBackend:
             
             self.network_group = network_groups[0]
             
+            # Get input/output vstream info (for names and shapes)
+            self.input_vstream_info = self.hef.get_input_vstream_infos()[0]
+            self.output_vstream_info = self.hef.get_output_vstream_infos()[0]
+            logger.info(f"  Input vstream: {self.input_vstream_info.name}, shape={self.input_vstream_info.shape}")
+            logger.info(f"  Output vstream: {self.output_vstream_info.name}, shape={self.output_vstream_info.shape}")
+            
             # Get input/output vstream params
-            # API varies by HailoRT version - try different approaches
+            # Based on working example: https://community.hailo.ai/t/hailort-minimal-working-example-for-python-and-hailo8/7685
+            # Our models are quantized UINT8, so use quantized=True (default)
+            self.network_group_params = self.network_group.create_params()
+            
             try:
-                # Method 1: via network_group_params
-                self.network_group_params = self.network_group.create_params()
-                self.input_vstreams_params = self.network_group_params.make_input_vstream_params()
-                self.output_vstreams_params = self.network_group_params.make_output_vstream_params()
-            except (AttributeError, TypeError):
-                # Method 2: direct from network_group
-                try:
-                    self.input_vstreams_params = InputVStreamParams.make(self.network_group)
-                    self.output_vstreams_params = OutputVStreamParams.make(self.network_group)
-                except:
-                    # Method 3: make_from_network_group
-                    self.input_vstreams_params = InputVStreamParams.make_from_network_group(self.network_group)
-                    self.output_vstreams_params = OutputVStreamParams.make_from_network_group(self.network_group)
+                # Use make_from_network_group with appropriate format
+                # For UINT8 quantized models, use default parameters (quantized=True)
+                self.input_vstreams_params = InputVStreamParams.make_from_network_group(
+                    self.network_group, 
+                    quantized=True,
+                    format_type=FormatType.UINT8
+                )
+                self.output_vstreams_params = OutputVStreamParams.make_from_network_group(
+                    self.network_group,
+                    quantized=True,
+                    format_type=FormatType.FLOAT32  # NMS outputs are float
+                )
+            except TypeError:
+                # Fallback for older API versions without format_type parameter
+                self.input_vstreams_params = InputVStreamParams.make_from_network_group(self.network_group)
+                self.output_vstreams_params = OutputVStreamParams.make_from_network_group(self.network_group)
             
             logger.info(f"✓ HEF loaded successfully")
             logger.info(f"  Network: {self.network_group.name}")
@@ -301,7 +315,10 @@ class HailoBackend:
                 with self.network_group.activate(self.network_group_params):
                     with InferVStreams(self.network_group, self.input_vstreams_params, self.output_vstreams_params) as infer_pipeline:
                         logger.info(f"Running inference...")
-                        # Run inference (blocking call)
+                        # CRITICAL FIX: Pass only the values (list of arrays), not the dict
+                        # The InferVStreams.infer() expects: infer(input_data: dict or list of arrays)
+                        # Based on Hailo docs, it should accept dict, but let's try both
+                        logger.info(f"Input data type: {type(input_data)}, keys: {list(input_data.keys()) if isinstance(input_data, dict) else 'N/A'}")
                         output_data = infer_pipeline.infer(input_data)
                         logger.info(f"Inference complete! Output type: {type(output_data)}")
                 
@@ -347,17 +364,15 @@ class HailoBackend:
         if actual_size != expected_size:
             logger.warning(f"Input size mismatch: expected {expected_size}, got {actual_size}")
         
-        # Get input name from vstream params
-        # Different HailoRT versions have different structures
-        if isinstance(self.input_vstreams_params, dict):
-            input_name = list(self.input_vstreams_params.keys())[0]
-        elif isinstance(self.input_vstreams_params, list):
-            input_name = self.input_vstreams_params[0].name
-        else:
-            # Fallback to common name
-            input_name = "input_layer1"
+        # Get input name from vstream info (based on official working example)
+        # https://community.hailo.ai/t/hailort-minimal-working-example-for-python-and-hailo8/7685
+        input_name = self.input_vstream_info.name if self.input_vstream_info else "input_layer1"
         
         logger.debug(f"Preprocessed input '{input_name}': shape={input_data.shape}, dtype={input_data.dtype}, size={input_data.nbytes}")
+        
+        # CRITICAL FIX: Hailo's InferVStreams.infer() REQUIRES batch dimension (1, H, W, C)
+        # Based on official example: https://community.hailo.ai/t/hailort-minimal-working-example-for-python-and-hailo8/7685
+        # DO NOT remove the batch dimension!
         
         return {input_name: input_data}
     

@@ -189,3 +189,9 @@ config/local_*.json
 .env.development
 *.mp4
 *.mov
+*.whl
+*.zip
+venv_training/
+wsl_transfer/*.whl
+hailo_compilation_package.zip
+output/

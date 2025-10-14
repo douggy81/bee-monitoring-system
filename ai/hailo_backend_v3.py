@@ -48,15 +48,18 @@ class HailoBackend:
     
     def _resolve_default_hef_path(self) -> Optional[str]:
         """Find default HEF file."""
-        here = os.path.dirname(os.path.abspath(__file__))
-        root = os.path.abspath(os.path.join(here, os.pardir))
-        models_dir = os.path.join(root, "api", "models")
+        here = os.path.dirname(os.path.abspath(__file__))  # /opt/bee-monitoring/src/ai
+        src_root = os.path.abspath(os.path.join(here, os.pardir))  # /opt/bee-monitoring/src
+        project_root = os.path.abspath(os.path.join(src_root, os.pardir))  # /opt/bee-monitoring
+        models_dir = os.path.join(project_root, "models")  # /opt/bee-monitoring/models
+        api_models_dir = os.path.join(src_root, "api", "models")  # /opt/bee-monitoring/src/api/models
         
-        # Prioritize newest freshly compiled model
+        # Prioritize newest YOLO11m model (best accuracy!)
         hef_candidates = [
-            os.path.join(models_dir, "bee_test2--640x640_quant_hailort_multidevice_1/bee_test2--640x640_quant_hailort_multidevice_1.hef"),
-            os.path.join(models_dir, "yolo11n_bee_v2--800x800_quant_hailort_multidevice_2.hef"),
-            os.path.join(models_dir, "yolo11n_bee_best--640x640_quant_hailort_multidevice_1.hef"),
+            os.path.join(models_dir, "yolo11m_bee_best.hef"),  # NEW: YOLO11m trained model
+            os.path.join(api_models_dir, "bee_test2--640x640_quant_hailort_multidevice_1/bee_test2--640x640_quant_hailort_multidevice_1.hef"),
+            os.path.join(api_models_dir, "yolo11n_bee_v2--800x800_quant_hailort_multidevice_2.hef"),
+            os.path.join(api_models_dir, "yolo11n_bee_best--640x640_quant_hailort_multidevice_1.hef"),
         ]
         
         for hef in hef_candidates:
@@ -223,21 +226,21 @@ class HailoBackend:
             completion_event = threading.Event()
             completion_result = {}
             
-            def callback(completion_info, bindings_arg):
+            def callback(completion_info):
                 """Callback when inference completes."""
                 if completion_info.exception:
                     logger.error(f"Inference callback exception: {completion_info.exception}")
                 else:
                     # Get results from output buffers
                     for name in self.infer_model.output_names:
-                        completion_result[name] = bindings_arg.output(name).get_buffer().copy()
+                        completion_result[name] = bindings.output(name).get_buffer().copy()
                 completion_event.set()
             
             # Wait for device ready
             self.configured_infer_model.wait_for_async_ready(timeout_ms=10000)
             
             # Run async inference with callback
-            self.configured_infer_model.run_async([bindings], lambda ci: callback(ci, bindings))
+            self.configured_infer_model.run_async([bindings], callback)
             
             # Wait for completion
             if not completion_event.wait(timeout=10.0):

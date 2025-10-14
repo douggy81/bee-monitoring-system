@@ -68,16 +68,26 @@ class CpuBackend:
     def _resolve_default_model_path(self) -> str:
         # Prefer ONNX to avoid requiring PyTorch on target device
         here = os.path.dirname(os.path.abspath(__file__))
-        root = os.path.abspath(os.path.join(here, os.pardir))
-        # Prioritize custom bee model, then generic YOLO11n, fallback to YOLOv8n
-        yolo11_bee_onnx = os.path.join(root, "api", "models", "yolo11n_bee.onnx")
-        yolo11_onnx = os.path.join(root, "api", "models", "yolo11n.onnx")
-        yolo11_pt = os.path.join(root, "api", "models", "yolo11n.pt")
-        yolo8_onnx = os.path.join(root, "api", "models", "yolov8n.onnx")
-        yolo8_pt = os.path.join(root, "api", "models", "yolov8n.pt")
+        src_root = os.path.abspath(os.path.join(here, os.pardir))
+        project_root = os.path.abspath(os.path.join(src_root, os.pardir))
         
-        if os.path.isfile(yolo11_bee_onnx):
-            return yolo11_bee_onnx
+        # PRIORITY 1: Trained YOLO11m model (87.2% mAP - best accuracy!)
+        yolo11m_trained = os.path.join(project_root, "models", "yolo11m", "yolo11m_bee_best.onnx")
+        
+        # PRIORITY 2: Other bee models
+        yolo11n_bee_api = os.path.join(src_root, "api", "models", "yolo11n_bee.onnx")
+        
+        # PRIORITY 3: Generic YOLO models (fallback)
+        yolo11_onnx = os.path.join(src_root, "api", "models", "yolo11n.onnx")
+        yolo11_pt = os.path.join(src_root, "api", "models", "yolo11n.pt")
+        yolo8_onnx = os.path.join(src_root, "api", "models", "yolov8n.onnx")
+        yolo8_pt = os.path.join(src_root, "api", "models", "yolov8n.pt")
+        
+        # Check in priority order
+        if os.path.isfile(yolo11m_trained):
+            return yolo11m_trained
+        if os.path.isfile(yolo11n_bee_api):
+            return yolo11n_bee_api
         elif os.path.isfile(yolo11_onnx):
             return yolo11_onnx
         elif os.path.isfile(yolo11_pt):
