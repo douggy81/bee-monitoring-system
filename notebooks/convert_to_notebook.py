@@ -85,13 +85,17 @@ for i, cell_content in enumerate(cells_raw[1:], 1):
             "source": [f"## {title}"]
         })
         
-        # Add code cell
+        # Add code cell (each line must end with \n except last)
+        source_lines = [line + '\n' for line in code_lines[:-1]]
+        if code_lines:
+            source_lines.append(code_lines[-1])  # Last line without \n
+        
         notebook['cells'].append({
             "cell_type": "code",
             "metadata": {"id": f"cell_{i}"},
             "execution_count": None,
             "outputs": [],
-            "source": code_lines
+            "source": source_lines
         })
 
 # Write notebook
