@@ -5,13 +5,11 @@ Run: python convert_to_notebook.py
 """
 
 import json
+import re
 
 # Read the Python file
 with open('bee_processing_FIXED.py', 'r') as f:
     content = f.read()
-
-# Split by cell markers
-cells_raw = content.split('# ============================================\n# CELL ')
 
 # Create notebook structure
 notebook = {
@@ -34,13 +32,23 @@ notebook = {
     "cells": []
 }
 
-# Process first cell (header)
-if cells_raw[0].strip():
-    lines = cells_raw[0].strip().split('\n')
+# Split by cell markers using regex
+cell_pattern = r'# ={40,}\s*\n# CELL (\d+): (.+?)\s*\n# ={40,}\s*\n'
+cell_splits = re.split(cell_pattern, content)
+
+# First part is the header
+header = cell_splits[0].strip()
+if header:
+    # Extract markdown from header
+    lines = header.split('\n')
     markdown_lines = []
     for line in lines:
-        if line.startswith('"""') or line.startswith('#'):
-            markdown_lines.append(line.replace('"""', '').replace('# ', '').strip())
+        if line.startswith('#'):
+            markdown_lines.append(line.lstrip('#').strip())
+        elif '"""' in line:
+            continue
+        elif line.strip():
+            markdown_lines.append(line.strip())
     
     if markdown_lines:
         notebook['cells'].append({
@@ -49,54 +57,51 @@ if cells_raw[0].strip():
             "source": markdown_lines
         })
 
-# Process remaining cells
-for i, cell_content in enumerate(cells_raw[1:], 1):
-    if not cell_content.strip():
-        continue
+# Process remaining cells (they come in groups of 3: cell_num, title, code)
+for i in range(1, len(cell_splits), 3):
+    if i + 2 >= len(cell_splits):
+        break
     
-    lines = cell_content.split('\n')
+    cell_num = cell_splits[i]
+    title = cell_splits[i + 1]
+    code = cell_splits[i + 2]
     
-    # Extract cell title
-    title_line = lines[0] if lines else f"Cell {i}"
-    title = title_line.split(':')[-1].strip() if ':' in title_line else title_line
+    # Clean up code - remove trailing empty lines and next cell marker
+    code_lines = code.split('\n')
     
-    # Get code (skip the separator lines)
-    code_lines = []
-    skip_next = False
-    
-    for line in lines[1:]:
-        if line.startswith('# ======='):
-            skip_next = True
-            continue
-        if skip_next:
-            skip_next = False
-            continue
-        code_lines.append(line)
-    
-    # Remove trailing empty lines
+    # Remove empty lines at the end
     while code_lines and not code_lines[-1].strip():
         code_lines.pop()
     
-    if code_lines:
-        # Add markdown cell for title
-        notebook['cells'].append({
-            "cell_type": "markdown",
-            "metadata": {"id": f"title_{i}"},
-            "source": [f"## {title}"]
-        })
-        
-        # Add code cell (each line must end with \n except last)
-        source_lines = [line + '\n' for line in code_lines[:-1]]
-        if code_lines:
-            source_lines.append(code_lines[-1])  # Last line without \n
-        
-        notebook['cells'].append({
-            "cell_type": "code",
-            "metadata": {"id": f"cell_{i}"},
-            "execution_count": None,
-            "outputs": [],
-            "source": source_lines
-        })
+    # Remove any trailing cell markers
+    while code_lines and code_lines[-1].startswith('# ====='):
+        code_lines.pop()
+    
+    if not code_lines:
+        continue
+    
+    # Add markdown title
+    notebook['cells'].append({
+        "cell_type": "markdown",
+        "metadata": {"id": f"title_{cell_num}"},
+        "source": [f"## {title}"]
+    })
+    
+    # Add code cell with proper line endings
+    source_lines = []
+    for j, line in enumerate(code_lines):
+        if j < len(code_lines) - 1:
+            source_lines.append(line + '\n')
+        else:
+            source_lines.append(line)  # Last line without \n
+    
+    notebook['cells'].append({
+        "cell_type": "code",
+        "metadata": {"id": f"code_{cell_num}"},
+        "execution_count": None,
+        "outputs": [],
+        "source": source_lines
+    })
 
 # Write notebook
 output_file = 'bee_processing_FIXED.ipynb'
@@ -105,4 +110,5 @@ with open(output_file, 'w') as f:
 
 print(f"✅ Created {output_file}")
 print(f"   Total cells: {len(notebook['cells'])}")
+print(f"   Code cells: {sum(1 for c in notebook['cells'] if c['cell_type'] == 'code')}")
 print(f"\n📤 Upload to Colab: File → Upload notebook → {output_file}")
