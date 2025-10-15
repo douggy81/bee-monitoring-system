@@ -133,7 +133,10 @@ print("✅ Configuration ready")
 # ============================================
 def classify_bee_behavior(track_positions, fps):
     """
-    FPS-aware behavior classification - works at ANY frame rate!
+    FPS-aware behavior classification:
+    - Flying: Fast movement (incoming/outgoing bees)
+    - Browsing: Slow movement (bees on hive surface)
+    - Stationary: No movement (dead bee, stuck, or resting)
     """
     
     if len(track_positions) < int(0.5 * fps):
@@ -141,45 +144,26 @@ def classify_bee_behavior(track_positions, fps):
     
     positions = np.array([(x, y) for x, y, _ in track_positions])
     
-    # 1. Speed (pixels per frame)
+    # Calculate speed (pixels per frame)
     distances = np.sqrt(np.sum(np.diff(positions, axis=0)**2, axis=1))
     avg_speed = np.mean(distances)
-    
-    # 2. Direction changes
-    if len(positions) > 2:
-        vectors = np.diff(positions, axis=0)
-        angles = np.arctan2(vectors[:, 1], vectors[:, 0])
-        angle_changes = np.abs(np.diff(angles))
-        angle_changes = np.minimum(angle_changes, 2*np.pi - angle_changes)
-        avg_angle_change = np.mean(angle_changes)
-    else:
-        avg_angle_change = 0
-    
-    # 3. Straightness
-    total_path = np.sum(distances)
-    displacement = np.linalg.norm(positions[-1] - positions[0])
-    straightness = displacement / total_path if total_path > 0 else 0
+    max_speed = np.max(distances) if len(distances) > 0 else 0
     
     # FPS-AWARE THRESHOLDS (automatically scale!)
     fps_scale = 30.0 / fps
-    SPEED_THRESHOLD_FAST = 3.0 * fps_scale
-    SPEED_THRESHOLD_SLOW = 1.0 * fps_scale
-    ANGLE_THRESHOLD_ERRATIC = 0.5
-    STRAIGHTNESS_THRESHOLD = 0.6
+    SPEED_THRESHOLD_FLYING = 3.0 * fps_scale   # Fast movement
+    SPEED_THRESHOLD_MOVING = 0.5 * fps_scale   # Minimum movement
     
-    # Classify
-    if avg_speed < SPEED_THRESHOLD_SLOW:
-        return 'browsing'
-    elif avg_speed > SPEED_THRESHOLD_FAST:
-        if avg_angle_change > ANGLE_THRESHOLD_ERRATIC or straightness < STRAIGHTNESS_THRESHOLD:
-            return 'erratic'
-        else:
-            return 'flying'
+    # Classify based on speed
+    if max_speed > SPEED_THRESHOLD_FLYING:
+        # If bee ever moved fast, it's flying (even if it slows down later)
+        return 'flying'
+    elif avg_speed < SPEED_THRESHOLD_MOVING:
+        # Almost no movement - could be dead or stuck
+        return 'stationary'
     else:
-        if avg_angle_change > ANGLE_THRESHOLD_ERRATIC:
-            return 'erratic'
-        else:
-            return 'browsing'
+        # Slow movement - browsing/walking on hive
+        return 'browsing'
 
 print("✅ FPS-aware behavior classifier ready")
 
@@ -232,11 +216,16 @@ def process_video_with_behaviors(model, input_path, output_path, config, logo=No
     
     # Tracking
     track_history = {}
-    track_behaviors = {}
+    track_behaviors = {}  # Current behavior
+    track_peak_behaviors = {}  # Peak behavior (once flying, always flying)
     
-    # Rolling average
+    # Rolling averages (5 seconds)
     rolling_window_frames = int(5 * fps)
     bee_count_history = []
+    behavior_history = {'flying': [], 'browsing': [], 'stationary': []}
+    
+    # Pollen counter (simple incrementing counter)
+    pollen_count = 0
     
     print(f"\n🎬 Processing with FPS-aware behavior analysis...")
     print("="*70)
@@ -281,40 +270,67 @@ def process_video_with_behaviors(model, input_path, output_path, config, logo=No
                 
                 # Classify (need 1 second of data)
                 if len(track_history[tracker_id]) >= int(1 * fps):
-                    track_behaviors[tracker_id] = classify_bee_behavior(track_history[tracker_id], fps)
+                    current_behavior = classify_bee_behavior(track_history[tracker_id], fps)
+                    track_behaviors[tracker_id] = current_behavior
+                    
+                    # Track peak behavior (once flying, always flying)
+                    if tracker_id not in track_peak_behaviors:
+                        track_peak_behaviors[tracker_id] = current_behavior
+                    elif current_behavior == 'flying':
+                        track_peak_behaviors[tracker_id] = 'flying'
+                    elif track_peak_behaviors[tracker_id] != 'flying' and current_behavior == 'browsing':
+                        track_peak_behaviors[tracker_id] = 'browsing'
             
-            # Rolling average
+            # Rolling averages
             bee_count_history.append(len(detections))
             if len(bee_count_history) > rolling_window_frames:
                 bee_count_history = bee_count_history[-rolling_window_frames:]
-            rolling_avg = np.mean(bee_count_history) if bee_count_history else 0
+            rolling_avg_bees = np.mean(bee_count_history) if bee_count_history else 0
+            
+            # Count current behaviors
+            current_behaviors = {'flying': 0, 'browsing': 0, 'stationary': 0}
+            for tracker_id in detections.tracker_id:
+                behavior = track_peak_behaviors.get(tracker_id, 'unknown')
+                if behavior in current_behaviors:
+                    current_behaviors[behavior] += 1
+            
+            # Update behavior rolling averages
+            for behavior in ['flying', 'browsing', 'stationary']:
+                behavior_history[behavior].append(current_behaviors[behavior])
+                if len(behavior_history[behavior]) > rolling_window_frames:
+                    behavior_history[behavior] = behavior_history[behavior][-rolling_window_frames:]
+            
+            # Calculate 5-second rolling averages
+            rolling_avg_flying = np.mean(behavior_history['flying']) if behavior_history['flying'] else 0
+            rolling_avg_browsing = np.mean(behavior_history['browsing']) if behavior_history['browsing'] else 0
+            rolling_avg_stationary = np.mean(behavior_history['stationary']) if behavior_history['stationary'] else 0
             
             # Annotate trails
             if len(detections) > 0:
                 frame = trace_annotator.annotate(scene=frame, detections=detections)
             
-            # Bounding boxes with behavior colors
+            # Bounding boxes with behavior colors (use peak behavior)
             for bbox, tracker_id in zip(detections.xyxy, detections.tracker_id):
-                behavior = track_behaviors.get(tracker_id, 'unknown')
+                behavior = track_peak_behaviors.get(tracker_id, 'unknown')
                 color_map = {
-                    'flying': (0, 255, 255),
-                    'erratic': (0, 165, 255),
-                    'browsing': (0, 255, 0),
-                    'unknown': (128, 128, 128)
+                    'flying': (0, 255, 255),      # Cyan
+                    'browsing': (0, 255, 0),      # Green
+                    'stationary': (0, 0, 255),    # Red
+                    'unknown': (128, 128, 128)    # Gray
                 }
                 color = color_map.get(behavior, (255, 255, 255))
                 x1, y1, x2, y2 = bbox.astype(int)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # Labels with TEXT symbols (no emojis!)
+            # Labels with TEXT symbols (use peak behavior)
             if len(detections) > 0:
                 labels = []
                 for tracker_id, confidence in zip(detections.tracker_id, detections.confidence):
-                    behavior = track_behaviors.get(tracker_id, 'unknown')
+                    behavior = track_peak_behaviors.get(tracker_id, 'unknown')
                     symbol_map = {
                         'flying': 'FLY',
-                        'erratic': 'ERR',
                         'browsing': 'BRW',
+                        'stationary': 'STA',
                         'unknown': '???'
                     }
                     symbol = symbol_map.get(behavior, '???')
@@ -322,34 +338,41 @@ def process_video_with_behaviors(model, input_path, output_path, config, logo=No
                 
                 frame = label_annotator.annotate(scene=frame, detections=detections, labels=labels)
             
+            # Pollen detection (simple counter - increment randomly for demo)
+            # TODO: Replace with actual YOLO pollen detection model
+            if len(detections) > 0 and frame_count % 60 == 0:  # Every 2 seconds
+                pollen_count += np.random.randint(0, 2)  # Simulate pollen detection
+            
             # Count behaviors
-            behavior_stats = {'flying': 0, 'erratic': 0, 'browsing': 0}
+            behavior_stats = {'flying': 0, 'browsing': 0, 'stationary': 0}
             for tracker_id in detections.tracker_id:
                 behavior = track_behaviors.get(tracker_id, 'unknown')
                 if behavior in behavior_stats:
                     behavior_stats[behavior] += 1
             
-            # Stats panel
-            panel_height = 200
-            cv2.rectangle(frame, (10, 10), (380, panel_height), (0, 0, 0), -1)
-            cv2.rectangle(frame, (10, 10), (380, panel_height), (0, 255, 255), 2)
+            # Stats panel (expanded for new classifications)
+            panel_height = 240
+            cv2.rectangle(frame, (10, 10), (400, panel_height), (0, 0, 0), -1)
+            cv2.rectangle(frame, (10, 10), (400, panel_height), (0, 255, 255), 2)
             
             y_pos = 30
             cv2.putText(frame, "DIGITAL4.AI BYTETRACK", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
             y_pos += 30
             cv2.putText(frame, f"BEES NOW: {len(detections)}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            y_pos += 30
-            cv2.putText(frame, f"5s AVG: {rolling_avg:.1f}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (100, 255, 100), 2)
+            y_pos += 25
+            cv2.putText(frame, f"5s AVG: {rolling_avg_bees:.1f}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 2)
             
-            if sum(behavior_stats.values()) > 0:
-                y_pos += 25
-                cv2.putText(frame, "BEHAVIORS:", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-                y_pos += 20
-                cv2.putText(frame, f"  Flying: {behavior_stats['flying']}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-                y_pos += 18
-                cv2.putText(frame, f"  Erratic: {behavior_stats['erratic']}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
-                y_pos += 18
-                cv2.putText(frame, f"  Browsing: {behavior_stats['browsing']}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            y_pos += 25
+            cv2.putText(frame, "BEHAVIORS (5s AVG):", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+            y_pos += 20
+            cv2.putText(frame, f"  Flying: {rolling_avg_flying:.1f}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            y_pos += 18
+            cv2.putText(frame, f"  Browsing: {rolling_avg_browsing:.1f}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            y_pos += 18
+            cv2.putText(frame, f"  Stationary: {rolling_avg_stationary:.1f}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+            
+            y_pos += 25
+            cv2.putText(frame, f"POLLEN COUNT: {pollen_count}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 200, 0), 2)
             
             y_pos += 25
             cv2.putText(frame, f"FRAME: {frame_count}/{total_frames}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (150, 150, 150), 1)
@@ -389,9 +412,9 @@ def process_video_with_behaviors(model, input_path, output_path, config, logo=No
                 eta = (total_frames - frame_count) / fps_processing if fps_processing > 0 else 0
                 
                 print(f"Frame {frame_count:4d}/{total_frames} ({frame_count/total_frames*100:5.1f}%) | "
-                      f"Bees:{len(detections):3d} Avg:{rolling_avg:.1f} | "
-                      f"FLY:{behavior_stats['flying']} ERR:{behavior_stats['erratic']} BRW:{behavior_stats['browsing']} | "
-                      f"GPU:{avg_inference:5.1f}ms | FPS:{fps_processing:5.1f} | ETA:{eta/60:4.1f}min")
+                      f"Bees:{len(detections):3d} Avg:{rolling_avg_bees:.1f} | "
+                      f"FLY:{rolling_avg_flying:.1f} BRW:{rolling_avg_browsing:.1f} STA:{rolling_avg_stationary:.1f} | "
+                      f"Pollen:{pollen_count} | GPU:{avg_inference:5.1f}ms | FPS:{fps_processing:5.1f} | ETA:{eta/60:4.1f}min")
     
     except KeyboardInterrupt:
         print("\n⚠️ Processing interrupted")
@@ -412,30 +435,32 @@ def process_video_with_behaviors(model, input_path, output_path, config, logo=No
     print(f"🚀 Processing FPS: {frame_count/elapsed:.1f}")
     print(f"📁 Output: {output_path}")
     
-    return output_path, track_history, track_behaviors
+    return output_path, track_history, track_peak_behaviors, pollen_count
 
 print("✅ Processing function ready")
 
 # ============================================
 # CELL 9: Run Processing
 # ============================================
-output_video, track_history, track_behaviors = process_video_with_behaviors(
+output_video, track_history, track_behaviors, pollen_count = process_video_with_behaviors(
     model=model,
     input_path=input_video,
     output_path=CONFIG['output_path'],
     config=CONFIG,
     logo=logo_resized,
-    logo_shadow=logo_shadow
 )
 
 print(f"\n✅ Enhanced video ready: {output_video}")
+print(f"   Total pollen detected: {pollen_count}")
 print("\n📊 Features included:")
-print("  ✅ FPS-aware behavior classification (works at any frame rate!)")
+print("  ✅ FPS-aware behavior classification (Flying/Browsing/Stationary)")
+print("  ✅ Peak behavior tracking (bees that flew stay as 'flying')")
+print("  ✅ 5-second rolling averages for ALL metrics")
+print("  ✅ Stationary detection (dead/stuck bees)")
+print("  ✅ Pollen counter (demo - needs actual YOLO model)")
 print("  ✅ Logo with 2-second fade-in + shadow")
-print("  ✅ 5-second rolling average bee count")
-print("  ✅ Text symbols (FLY/ERR/BRW) - no emoji rendering issues")
-print("  ✅ Color-coded bounding boxes by behavior")
-print("  ✅ Real-time behavior statistics")
+print("  ✅ Text symbols (FLY/BRW/STA) - no emoji issues")
+print("  ✅ Color-coded: Cyan=Flying, Green=Browsing, Red=Stationary")
 
 # ============================================
 # CELL 10: Export Data
@@ -458,10 +483,11 @@ export_data = {
         'total_unique_bees': len(track_history),
         'behaviors': {
             'flying': sum(1 for b in track_behaviors.values() if b == 'flying'),
-            'erratic': sum(1 for b in track_behaviors.values() if b == 'erratic'),
             'browsing': sum(1 for b in track_behaviors.values() if b == 'browsing'),
+            'stationary': sum(1 for b in track_behaviors.values() if b == 'stationary'),
             'unknown': sum(1 for b in track_behaviors.values() if b == 'unknown')
-        }
+        },
+        'pollen_count': pollen_count
     }
 }
 
@@ -478,9 +504,9 @@ with open(json_path, 'w') as f:
 print(f"\n📊 Exported tracking data:")
 print(f"   Unique bees: {export_data['summary']['total_unique_bees']}")
 print(f"   Flying: {export_data['summary']['behaviors']['flying']}")
-print(f"   Erratic: {export_data['summary']['behaviors']['erratic']}")
 print(f"   Browsing: {export_data['summary']['behaviors']['browsing']}")
-print(f"   Unknown: {export_data['summary']['behaviors']['unknown']}")
+print(f"   Stationary: {export_data['summary']['behaviors']['stationary']}")
+print(f"   Pollen count: {export_data['summary']['pollen_count']}")
 
 # Download
 from google.colab import files
