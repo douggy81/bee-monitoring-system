@@ -75,13 +75,13 @@ else:
 # Set input video
 input_video = f'{DRIVE_FOLDER}/clean_bee_hi_res.mp4'
 
-# Fast conversion: 4K → 1080p (30 seconds instead of 15 minutes!)
-print("🔄 Converting to 1080p (optimized)...")
-compatible_video = 'bee_1080p.mp4'
+# Fast conversion: 4K → 1080p + 60fps interpolation (2-3 minutes)
+print("🔄 Converting to 1080p @ 60fps (optimized)...")
+compatible_video = 'bee_1080p_60fps.mp4'
 
 cmd = [
     'ffmpeg', '-i', input_video,
-    '-vf', 'scale=1920:1080',
+    '-vf', 'scale=1920:1080,minterpolate=fps=60:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1',
     '-c:v', 'h264_nvenc',  # GPU encoder
     '-preset', 'p4',
     '-crf', '23',
@@ -110,23 +110,23 @@ else:
     print("❌ Conversion failed, using original")
 
 # ============================================
-# CELL 6: Configuration
+# CELL 6: Configuration (60fps optimized)
 # ============================================
 CONFIG = {
-    'output_path': 'bee_enhanced.mp4',
+    'output_path': 'bee_enhanced_60fps.mp4',
     'conf_threshold': 0.50,
     'iou_threshold': 0.45,
     'track_activation_threshold': 0.25,
-    'lost_track_buffer': 30,
+    'lost_track_buffer': 60,  # 2x for 60fps (was 30 for 30fps)
     'minimum_matching_threshold': 0.8,
-    'minimum_consecutive_frames': 1,
+    'minimum_consecutive_frames': 2,  # Slightly higher for 60fps
     'show_trails': True,
-    'trail_length': 30,
+    'trail_length': 60,  # 1 second trail at 60fps
     'show_labels': True,
     'use_bytetrack': True,
 }
 
-print("✅ Configuration ready")
+print("✅ 60fps configuration ready")
 
 # ============================================
 # CELL 7: FPS-Aware Behavior Classifier (FIXED!)
