@@ -70,20 +70,20 @@ else:
     logo_shadow = None
 
 # ============================================
-# CELL 5: Select & Convert Video (FAST!)
+# CELL 5: Select & Convert Video (30fps - FAST!)
 # ============================================
 # Set input video
 input_video = f'{DRIVE_FOLDER}/clean_bee_hi_res.mp4'
 
-# Fast conversion: 4K → 1080p + 60fps interpolation (2-3 minutes)
-print("🔄 Converting to 1080p @ 60fps (optimized)...")
-compatible_video = 'bee_1080p_60fps.mp4'
+# Fast conversion: 4K → 1080p only (30 seconds!)
+print("🔄 Converting to 1080p (fast - no interpolation)...")
+compatible_video = 'bee_1080p.mp4'
 
 cmd = [
     'ffmpeg', '-i', input_video,
-    '-vf', 'scale=1920:1080,minterpolate=fps=60:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1',
-    '-c:v', 'h264_nvenc',  # GPU encoder
-    '-preset', 'p4',
+    '-vf', 'scale=1920:1080',
+    '-c:v', 'libx264',  # CPU encoder (more compatible)
+    '-preset', 'fast',
     '-crf', '23',
     '-c:a', 'copy',
     '-y',
@@ -110,23 +110,23 @@ else:
     print("❌ Conversion failed, using original")
 
 # ============================================
-# CELL 6: Configuration (60fps optimized)
+# CELL 6: Configuration
 # ============================================
 CONFIG = {
-    'output_path': 'bee_enhanced_60fps.mp4',
+    'output_path': 'bee_enhanced.mp4',
     'conf_threshold': 0.50,
     'iou_threshold': 0.45,
     'track_activation_threshold': 0.25,
-    'lost_track_buffer': 60,  # 2x for 60fps (was 30 for 30fps)
+    'lost_track_buffer': 30,
     'minimum_matching_threshold': 0.8,
-    'minimum_consecutive_frames': 2,  # Slightly higher for 60fps
+    'minimum_consecutive_frames': 1,
     'show_trails': True,
-    'trail_length': 60,  # 1 second trail at 60fps
+    'trail_length': 30,  # 1 second trail at 30fps
     'show_labels': True,
     'use_bytetrack': True,
 }
 
-print("✅ 60fps configuration ready")
+print("✅ Configuration ready (30fps - fast processing!)")
 
 # ============================================
 # CELL 7: FPS-Aware Behavior Classifier (FIXED!)
