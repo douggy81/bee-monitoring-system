@@ -14,10 +14,6 @@ A comprehensive IoT solution for modern beekeeping that combines AI-powered comp
 ### AI Behavior Analysis in Action
 [![AI Bee Behavior Analysis](https://img.youtube.com/vi/c9Q56m17Nj0/maxresdefault.jpg)](https://www.youtube.com/watch?v=c9Q56m17Nj0)
 
-## 🚀 Live Demo
-
-**Production System**: [https://y0h0i3c8jkgk.manus.space](https://y0h0i3c8jkgk.manus.space)
-
 ## 📋 Table of Contents
 
 - [Video Demonstrations](#video-demonstrations)
@@ -238,7 +234,6 @@ sudo systemctl status bee-monitoring bee-api
 ### 4. Access the Dashboard
 Open your browser and navigate to:
 - **Local Access**: `http://[raspberry-pi-ip]:5000`
-- **Production Demo**: `https://y0h0i3c8jkgk.manus.space`
 
 ## 📦 Installation
 
@@ -351,7 +346,6 @@ Edit `config/api_config.json`:
 
 ### Base URL
 - **Local**: `http://[raspberry-pi-ip]:5000/api/bee`
-- **Production**: `https://y0h0i3c8jkgk.manus.space/api/bee`
 
 ### Key Endpoints
 
