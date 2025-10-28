@@ -16,18 +16,22 @@ A comprehensive IoT solution for modern beekeeping that combines AI-powered comp
 
 ## 📋 Table of Contents
 
-- [Video Demonstrations](#video-demonstrations)
-- [Features](#features)
-- [Video Processing Notebook](#video-processing-notebook)
-- [Hardware Requirements](#hardware-requirements)
-- [Quick Start](#quick-start)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [API Documentation](#api-documentation)
-- [Deployment](#deployment)
-- [OTA Updates](#ota-updates)
-- [Contributing](#contributing)
-- [License](#license)
+- [🎥 Video Demonstrations](#-video-demonstrations)
+- [✨ Features](#-features)
+- [🎬 Video Processing Notebook](#-video-processing-notebook)
+- [🛠 Hardware Requirements](#-hardware-requirements)
+- [🚀 Quick Start](#-quick-start)
+- [📦 Installation](#-installation)
+- [⚙️ Configuration](#-configuration)
+- [📚 API Documentation](#-api-documentation)
+- [🚀 Deployment](#-deployment)
+- [🔄 OTA Updates](#-ota-updates)
+- [📊 Monitoring and Maintenance](#-monitoring-and-maintenance)
+- [🧪 Development](#-development)
+- [🤝 Contributing](#-contributing)
+- [📄 License](#-license)
+- [🆘 Support](#-support)
+- [🏆 Acknowledgments](#-acknowledgments)
 
 ## ✨ Features
 
