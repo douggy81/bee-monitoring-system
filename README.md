@@ -9,10 +9,10 @@ A comprehensive IoT solution for modern beekeeping that combines AI-powered comp
 ## 🎥 Video Demonstrations
 
 ### System Overview & Live Demo
-[![Bee Monitoring System Demo](https://img.youtube.com/vi/Y1ME9W5ozKQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=Y1ME9W5ozKQ)
+[![Bee Monitoring System Demo](https://img.youtube.com/vi/Y1ME9W5ozKQ/hqdefault.jpg)](https://www.youtube.com/watch?v=Y1ME9W5ozKQ)
 
 ### AI Behavior Analysis in Action
-[![AI Bee Behavior Analysis](https://img.youtube.com/vi/c9Q56m17Nj0/maxresdefault.jpg)](https://www.youtube.com/watch?v=c9Q56m17Nj0)
+[![AI Bee Behavior Analysis](https://img.youtube.com/vi/c9Q56m17Nj0/hqdefault.jpg)](https://www.youtube.com/watch?v=c9Q56m17Nj0)
 
 ## 📋 Table of Contents
 
